@@ -193,7 +193,8 @@ export class World {
       this.land.tracks.update(this.fauna.records.values());
       this.trackUpdate = elapsed;
     }
-    this.land.tick(elapsed, night, this.weather, this.sun, this.camera, this.profile);
+    this.land.tick(elapsed, night, this.weather, this.sun, this.camera, this.profile,
+      this.following ? this.controls.target : null);
     this.fauna.tick(dt, elapsed, this.map, this.selectedId, this.markers, this.profile, this.camera);
     if (this.profile.shadows && elapsed - this.shadowUpdate >= .051) {
       this.renderer.shadowMap.needsUpdate = true;

@@ -228,11 +228,12 @@ function shrubGeometry() {
 function cover(scene, register) {
   const time = { value: 0 };
   const gust = { value: .33 };
+  const focus = { value: new T.Vector4() };
   const tracks = makeTracks();
   const nearPine = pine(true), farPine = pine(false);
-  const treeMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .95, side: T.DoubleSide }), time, gust, tracks, .021, false);
+  const treeMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .95, side: T.DoubleSide }), time, gust, tracks, .021, false, focus);
   const grassMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, color: 0xc9dcb0, side: T.DoubleSide, roughness: .89 }), time, gust, tracks, .18, true);
-  const shrubMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .96 }), time, gust, tracks, .13, true);
+  const shrubMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .96 }), time, gust, tracks, .13, true, focus);
   const blade = grassGeometry(), shrub = shrubGeometry();
   const treeDepth = sway(new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking }), time, gust, tracks, .021, false);
   const rockGeometry = new T.DodecahedronGeometry(1, 0);
@@ -270,7 +271,7 @@ function cover(scene, register) {
   const color = new T.Color();
   let lastMap;
   return {
-    time, gust, tracks,
+    time, gust, tracks, focus,
     update(map) {
       lastMap = map;
       for (const chunk of chunks) {
@@ -399,7 +400,7 @@ export function makeLand(scene, assets, register, onTextures) {
       updateRidges(map);
       forest.update(map);
     },
-    tick(time, night, weather, sun, camera, profile) {
+    tick(time, night, weather, sun, camera, profile, focus) {
       water.elapsed.value = forest.time.value = time;
       water.precipitation.value = Number(weather === 'rain');
       water.night.value = night;
@@ -409,6 +410,8 @@ export function makeLand(scene, assets, register, onTextures) {
       terrain.uniforms.snowLine.value = { clear: 33, rain: 31, fog: 26.5, heat: 45 }[weather];
       terrain.uniforms.rainfall.value = weather === 'rain' ? .90 : 0;
       forest.gust.value = weather === 'rain' ? 1.16 : weather === 'heat' ? .58 : .22;
+      if (focus) forest.focus.value.set(focus.x, focus.y, focus.z, 1);
+      else forest.focus.value.w = 0;
       forest.lod(camera, profile);
       wildfire.tick(time, weather, night, camera, profile);
       rain(time, weather);

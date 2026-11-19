@@ -50,7 +50,7 @@ export function makeTracks() {
   };
 }
 
-export function sway(material, time, gust, trackMap, strength, reactive) {
+export function sway(material, time, gust, trackMap, strength, reactive, focus) {
   material.onBeforeCompile = shader => {
     shader.uniforms.windTime = time;
     shader.uniforms.windGust = gust;
@@ -60,7 +60,27 @@ export function sway(material, time, gust, trackMap, strength, reactive) {
         #include <begin_vertex>
         transformed=foliageBend(transformed,instanceMatrix);
       `);
+    if (focus) {
+      shader.uniforms.followFocus = focus;
+      shader.vertexShader = 'varying vec3 vFoliageWorld;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>', 'vFoliageWorld=(modelMatrix*instanceMatrix*vec4(transformed,1.)).xyz;\n#include <project_vertex>',
+      );
+      shader.fragmentShader = 'uniform vec4 followFocus; varying vec3 vFoliageWorld;\n' + shader.fragmentShader.replace(
+        '#include <alphatest_fragment>', `
+        #include <alphatest_fragment>
+        if (followFocus.w > .5) {
+          vec3 ray=followFocus.xyz-cameraPosition;
+          vec3 toLeaf=vFoliageWorld-cameraPosition;
+          float t=dot(toLeaf,ray)/max(dot(ray,ray),.001);
+          float lineDistance=length(toLeaf-clamp(t,0.,1.)*ray);
+          float gap=(1.-smoothstep(.83,1.89,lineDistance))*(1.-smoothstep(.93,1.04,t));
+          float hash=fract(52.9829189*fract(dot(gl_FragCoord.xy,vec2(.06711056,.00583715))));
+          if (hash < gap) discard;
+        }
+        `,
+      );
+    }
   };
-  material.customProgramCacheKey = () => 'foliage-v2-' + strength + '-' + reactive;
+  material.customProgramCacheKey = () => 'foliage-v3-' + strength + '-' + reactive + '-' + Boolean(focus);
   return material;
 }
