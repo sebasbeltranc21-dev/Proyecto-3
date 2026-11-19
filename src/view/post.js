@@ -59,7 +59,11 @@ export function makePost(renderer, scene, camera, skyUniforms) {
   const beauty = new EffectComposer(renderer);
   const render = new RenderPass(scene, camera);
   const ao = new OpaqueAO(scene, camera, 1, 1, 12);
-  ao.kernelRadius = 7;
+  ao.kernelRadius = 5;
+  ao.copyMaterial.fragmentShader = ao.copyMaterial.fragmentShader.replace(
+    'gl_FragColor = opacity * texel;',
+    'gl_FragColor = vec4(mix(vec3(1.),texel.rgb,.54),1.);',
+  );
   ao.minDistance = .0015;
   ao.maxDistance = .026;
   const gradingPass = new ShaderPass(colorGrade);
@@ -86,7 +90,7 @@ export function makePost(renderer, scene, camera, skyUniforms) {
       beauty.setSize(width, height);
       bloom.setPixelRatio(Math.min(.69, ratio * .45));
       bloom.setSize(width, height);
-      ao.setSize(Math.max(1, Math.floor(width * ratio * .67)), Math.max(1, Math.floor(height * ratio * .67)));
+      ao.setSize(Math.max(1, Math.floor(width * ratio * .53)), Math.max(1, Math.floor(height * ratio * .53)));
     },
     render(dt, weather, night, profile) {
       const shadow = renderer.shadowMap.needsUpdate;

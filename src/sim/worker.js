@@ -28,6 +28,7 @@ function send() {
     agents[at + 12] = a.fear;
     agents[at + 13] = a.signal;
     agents[at + 14] = a.action === 'Alimentándose' ? 1 : a.action === 'Bebiendo' ? .91 : 0;
+    agents[at + 15] = Number(a.swimming);
   }
   const transfer = [buffer];
   const terrain = sim.edited ? sim.map.slice() : undefined;

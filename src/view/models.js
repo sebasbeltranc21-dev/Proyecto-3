@@ -88,8 +88,10 @@ export class AnimalModels {
       mesh.setMatrixAt(row, object.matrix);
       this.color.setRGB(1 + a.coatTrait * .21, 1 + a.coatTrait * .098, 1 - a.coatTrait * .115);
       mesh.setColorAt(row, this.color);
-      motion.setXYZW(row, pose.stride, pose.crouch, pose.attack, pose.phase);
-      expression.setXYZW(row, pose.trot, pose.run, pose.graze, pose.alert);
+      motion.setXYZW(row, a.swimming ? Math.max(.36, pose.stride) : pose.stride,
+        pose.crouch * (1 - pose.swim), pose.attack * (1 - pose.swim), pose.phase);
+      expression.setXYZW(row, pose.trot * (1 - pose.swim) + pose.swim * .78, pose.run * (1 - pose.swim),
+        pose.graze * (1 - pose.swim), Math.max(pose.alert, pose.swim * .85));
     }
     for (const pair of this.batches) {
       for (const [level, { mesh, motion, expression }] of pair.entries()) {

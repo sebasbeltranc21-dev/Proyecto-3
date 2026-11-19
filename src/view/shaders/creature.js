@@ -10,7 +10,7 @@ float neckWeight(vec3 p){
 }
 float neckPitch(vec3 p){
   float pace=aMotion.x, phase=aMotion.w;
-  return neckWeight(p)*(.68*aExpression.z-.55*aExpression.w+.32*aMotion.z+
+  return neckWeight(p)*(mix(1.49,1.19,kind)*aExpression.z-.55*aExpression.w+.32*aMotion.z+
     sin(phase*2.+.7)*pace*mix(.025,.13,aExpression.y));
 }
 vec2 rotatePitch(vec2 point,float angle){
@@ -40,6 +40,7 @@ vec3 poseAnimal(vec3 p){
   float head=neckWeight(p);
   vec2 neckAnchor=vec2(mix(1.02,.82,kind),mix(.36,.48,kind));
   p.yz=neckAnchor+rotatePitch(p.yz-neckAnchor,neckPitch(p));
+  p.y-=head*aExpression.z*mix(.22,.16,kind);
   p.z+=steps.x*limb*stride*(1.-crouch*.42);
   p.y+=steps.y*limb*stride*(1.-crouch*.40);
   p.y-=crouch*.21*smoothstep(.04,.87,p.y);
@@ -75,5 +76,5 @@ export function animateCreature(material, time, species, depth = false) {
       diffuseColor.rgb *= 1.+(.14*fibres+.075*grain)*filtered;
     `);
   };
-  material.customProgramCacheKey = () => depth ? 'animal-depth-3' : 'animal-coat-3';
+  material.customProgramCacheKey = () => depth ? 'animal-depth-4' : 'animal-coat-4';
 }

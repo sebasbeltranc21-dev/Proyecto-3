@@ -4,7 +4,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
-const files = import.meta.glob('../assets/**/*.{glb,ktx2,hdr}', {
+const files = import.meta.glob('../assets/**/*.{glb,ktx2}', {
   eager: true, query: '?url', import: 'default',
 });
 

@@ -1,4 +1,5 @@
 import { DataTexture, RepeatWrapping, SRGBColorSpace } from 'three';
+import { WATER } from '../../sim/config.js';
 
 const names = ['grass', 'sand', 'rock', 'snow'];
 const colors = [[88, 113, 58], [140, 122, 92], [104, 111, 111], [217, 225, 229]];
@@ -15,7 +16,7 @@ const varying = 'varying vec3 vLand; varying vec3 vLandNormal;\n';
 const samplers = names.map(name => `uniform sampler2D ${name}Color, ${name}Surface;`).join('\n');
 const functions = `
 uniform sampler2D biomeField, burnField;
-uniform float snowLine, rainfall;
+uniform float snowLine, rainfall, waterLevel;
 struct BiomeSample { vec3 color; vec4 surface; vec2 bump; };
 
 float landHash(vec2 p) { return fract(sin(dot(p,vec2(143.7,255.1)))*43758.5453); }
@@ -45,7 +46,8 @@ BiomeSample shadeLand(vec3 wp, vec3 worldNormal) {
   float broad=landNoise(wp.xz*.041);
   float grains=landNoise(wp.xz*1.66+5.3);
   float slope=1.-max(0.,worldNormal.y);
-  float shore=(1.-smoothstep(-.95,2.72+n*1.37,wp.y))*(1.-outside);
+  float bankHeight=wp.y-waterLevel;
+  float shore=(1.-smoothstep(.84,3.05+n*1.02,bankHeight))*(1.-outside);
   float stone=smoothstep(.11,.43,slope+n*.127)+.48*smoothstep(18.,39.,wp.y);
   float frostline=snowLine+outside*16.+(broad-.5)*3.4;
   float frost=smoothstep(frostline-2.3,frostline+3.8,wp.y+n*2.8)*(1.-smoothstep(.15,.57,slope));
@@ -55,9 +57,10 @@ BiomeSample shadeLand(vec3 wp, vec3 worldNormal) {
   result.color*=lush*(.80+broad*.26+grains*.18)*(1.-ecology.g*.16);
   if(shore>.006) {
     BiomeSample sand=sampleTop(sandColor,sandSurface,wp.xz*.69+vec2(n*.38,broad*.33));
-    float wet=(1.-smoothstep(-1.3,1.65+n*.31,wp.y))*.76+rainfall*.21;
+    float bankFilm=1.-smoothstep(.04,.79+n*.21,abs(bankHeight));
+    float wet=max(bankFilm*.84,smoothstep(0.,1.75,-bankHeight)*.54)+rainfall*.15;
     sand.color*=mix(vec3(1.04,1.015,.93),vec3(.48,.54,.47),wet);
-    sand.surface.b=mix(sand.surface.b,.32,wet*.68);
+    sand.surface.b=mix(sand.surface.b,.236,wet*.78);
     result=interpolateBiome(result,sand,shore);
   }
   if(stone>.006) {
@@ -81,7 +84,7 @@ BiomeSample shadeLand(vec3 wp, vec3 worldNormal) {
 
 export function terrainSurface(material, field, scars, assets, register, onReady) {
   const neutral = pixel([128, 128, 224, 255], false);
-  const uniforms = { biomeField: { value: field }, burnField: { value: scars }, snowLine: { value: 35 }, rainfall: { value: 0 } };
+  const uniforms = { biomeField: { value: field }, burnField: { value: scars }, snowLine: { value: 35 }, rainfall: { value: 0 }, waterLevel: { value: WATER } };
   names.forEach((name, index) => {
     uniforms[name + 'Color'] = { value: pixel([...colors[index], 255], true) };
     uniforms[name + 'Surface'] = { value: neutral };
@@ -99,14 +102,23 @@ export function terrainSurface(material, field, scars, assets, register, onReady
       `)
       .replace('#include <roughnessmap_fragment>', `
         #include <roughnessmap_fragment>
-        roughnessFactor *= clamp(terrain.surface.b,.15,1.);
+        float grit=landNoise(vLand.xz*3.83+vLand.y*1.57);
+        float shimmer=1.-smoothstep(.40,1.50,length(fwidth(vLand))*4.);
+        roughnessFactor*=clamp(terrain.surface.b+(grit-.5)*.14*shimmer,.16,1.);
       `)
       .replace('#include <normal_fragment_maps>', `
         #include <normal_fragment_maps>
         vec3 tangentX=normalize(vec3(1.,0.,0.)-biomeNormal*biomeNormal.x+vec3(0.,0.,.0001));
         vec3 tangentZ=normalize(cross(tangentX,biomeNormal));
         vec3 bumpWorld=terrain.bump.x*tangentX + terrain.bump.y*tangentZ;
-        normal = normalize(normal + (viewMatrix * vec4(bumpWorld,0.)).xyz*.44);
+        normal=normalize(normal+(viewMatrix*vec4(bumpWorld,0.)).xyz*.51);
+        float fidelity=1.-smoothstep(.25,1.05,length(fwidth(vLand))*7.8);
+        float micro=.033*landNoise(vLand.xz*7.3+vLand.y*.67)+.015*landNoise(vLand.xz*15.1+vLand.y*1.94);
+        vec3 adjacentX=dFdx(-vViewPosition), adjacentY=dFdy(-vViewPosition);
+        vec3 crossX=cross(adjacentY,normal), crossY=cross(normal,adjacentX);
+        float det=dot(adjacentX,crossX);
+        vec3 perturbation=sign(det)*(dFdx(micro)*crossX+dFdy(micro)*crossY);
+        normal=normalize(max(abs(det),1.e-7)*normal - fidelity*perturbation);
       `)
       .replace('#include <aomap_fragment>', `
         #include <aomap_fragment>
@@ -114,7 +126,7 @@ export function terrainSurface(material, field, scars, assets, register, onReady
         reflectedLight.indirectSpecular *= mix(.66,1.,terrain.surface.a);
       `);
   };
-  material.customProgramCacheKey = () => 'biome-pbr-v3';
+  material.customProgramCacheKey = () => 'biome-pbr-v4';
   register(material);
   Promise.all(names.map(async name => {
     const [color, surface] = await Promise.all([assets.texture(name + '-color', true), assets.texture(name + '-surface')]);

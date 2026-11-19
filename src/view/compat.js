@@ -2,6 +2,7 @@ import { MOUSE, PerspectiveCamera, Raycaster, Vector2, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HALF, WATER, clamp, rng } from '../sim/config.js';
 import { ground, tile } from '../sim/terrain.js';
+import { onWaterSurface } from '../sim/river-navigation.js';
 import { SKY_PRESETS } from '../ui-data.js';
 import { Fauna } from './fauna.js';
 import { INITIAL_POSITION, INITIAL_TARGET } from './world.js';
@@ -358,7 +359,7 @@ export class CompatibilityWorld {
       for (const a of this.fauna.records.values()) {
         a.x += (a.tx - a.x) * blend;
         a.z += (a.tz - a.z) * blend;
-        a.y = ground(this.map, a.x, a.z);
+        a.y = onWaterSurface(ground(this.map, a.x, a.z), a.targetSwimming);
       }
       this.paintWeather(this.ctx, now);
       this.paintIndicators(this.ctx, now);

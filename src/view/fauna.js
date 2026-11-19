@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { CAP, STRIDE } from '../sim/config.js';
 import { ground } from '../sim/terrain.js';
+import { WADE_HEIGHT, onWaterSurface } from '../sim/river-navigation.js';
 import { AnimalModels } from './models.js';
 import { newLocomotion } from './locomotion.js';
 
@@ -36,7 +37,7 @@ export class Fauna {
     this.points.frustumCulled = false;
     scene.add(this.points);
     this.meshes = parts.map(part => {
-      const material = new T.MeshStandardMaterial({ roughness: .89, flatShading: true });
+      const material = new T.MeshStandardMaterial({ roughness: .89 });
       register(material);
       const mesh = new T.InstancedMesh(part.shape, material, CAP);
       mesh.count = 0;
@@ -69,6 +70,7 @@ export class Fauna {
         tx: x, tz: z, ta: angle, pace: items[at + 5], hidden: items[at + 6], live: true,
         gait: items[at + 8], coatTrait: items[at + 9], sizeTrait: items[at + 10], attacking: items[at + 11],
         fear: items[at + 12], signaling: items[at + 13], feeding: items[at + 14],
+        targetSwimming: Boolean(items[at + 15]),
       });
       this.records.set(id, record);
     }
@@ -85,20 +87,22 @@ export class Fauna {
       a.x += dx;
       a.z += dz;
       a.distance = Math.hypot(dx, dz);
-      a.y = ground(map, a.x, a.z);
+      const height = ground(map, a.x, a.z);
+      a.swimming = a.targetSwimming || height < WADE_HEIGHT;
+      a.y = onWaterSurface(height, a.swimming);
       const delta = a.ta - a.angle;
       const yaw = Math.atan2(Math.sin(delta), Math.cos(delta)) * blend;
       a.angle += yaw;
       a.turnRate = yaw / Math.max(dt, .001);
       const sin = Math.sin(a.angle), cos = Math.cos(a.angle);
       const size = a.species ? 1.16 : 1.24;
-      const crouch = a.hidden ? .71 : 1;
+      const crouch = a.hidden && !a.swimming ? .71 : 1;
       const step = Math.sin(time * (2.9 + a.pace * 1.8) + a.id) * Math.min(.68, a.pace * .15);
       const object = this.object;
       if (!this.models.ready) for (const [index, part] of parts.entries()) {
         const mesh = this.meshes[index];
         const [x, y, z] = part.offset;
-        object.position.set(a.x + (x * cos + z * sin) * size, a.y + y * size * crouch, a.z + (z * cos - x * sin) * size);
+        object.position.set(a.x + (x * cos + z * sin) * size, a.y + y * size * crouch - (a.swimming ? .56 : 0), a.z + (z * cos - x * sin) * size);
         object.rotation.set(part.stride ? step * part.stride : part.tail ? .28 : 0, a.angle, part.tilt || 0, 'YXZ');
         const wolf = a.species;
         object.scale.set(part.scale[0] * size, part.scale[1] * size * crouch * (wolf ? .82 : 1), part.scale[2] * size);

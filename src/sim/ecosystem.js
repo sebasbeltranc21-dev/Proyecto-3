@@ -1,15 +1,14 @@
 import { CAP, CHANNELS, DT, GRID, HALF, INITIAL, SPECIES, WATER, clamp, rng } from './config.js';
 import { GENES, NI, NeuralNetwork } from './neural.js';
 import { brush, createTerrain, ground, tile } from './terrain.js';
+import { EDGE, RiverNavigation, WADE_HEIGHT, onWaterSurface } from './river-navigation.js';
 
 const CELLS = 20;
 const CELL_WIDTH = HALF * 2 / CELLS;
-const EDGE = HALF - 3;
 const cell = value => clamp(Math.floor((value + HALF) / CELL_WIDTH), 0, CELLS - 1);
 const SECTORS = [-1.24, -.62, 0, .62, 1.24, Math.PI];
 const SCAN = [3, 7, 13, 21, 31, 43];
 const RAYS = [-.78, 0, .78];
-const normalizeAngle = a => Math.atan2(Math.sin(a), Math.cos(a));
 
 function targetSensor(input, at, a, x, z, proximity) {
   if (proximity <= 0) return;
@@ -24,6 +23,7 @@ export class Ecosystem {
     this.seed = seed;
     this.random = rng(seed);
     this.map = createTerrain(seed);
+    this.river = new RiverNavigation(this.map);
     this.agents = [];
     this.byId = new Map();
     this.buckets = Array.from({ length: CELLS ** 2 }, () => []);
@@ -57,12 +57,13 @@ export class Ecosystem {
     if (parent) {
       x = clamp(parent.x + (random() - .5) * 5, -EDGE, EDGE);
       z = clamp(parent.z + (random() - .5) * 5, -EDGE, EDGE);
+      if (ground(this.map, x, z) < WADE_HEIGHT) { x = parent.x; z = parent.z; }
     } else {
       let best = -Infinity;
       for (let attempt = 0; attempt < 64; attempt++) {
         const px = (random() - .5) * HALF * 1.64;
         const pz = (random() - .5) * HALF * 1.68;
-        const height = this.map[tile(px, pz)];
+        const height = ground(this.map, px, pz);
         if (height <= best) continue;
         best = height;
         x = px;
@@ -80,7 +81,7 @@ export class Ecosystem {
     const coatTrait = Math.tanh(genes[23] * .86 + genes[55] * .73 + genes[324] * .54 - genes[411] * .72);
     const sizeTrait = Math.tanh(genes[26] * .71 + genes[103] * .65 - genes[340] * .51 + genes[477] * .6);
     const a = {
-      coatTrait, sizeTrait, gait: 0,
+      coatTrait, sizeTrait, gait: 0, swimming: false, drinking: false,
       id: this.nextId++, species, x, z, angle: parent?.angle ?? random() * Math.PI * 2,
       hunger: .14 + random() * .25, thirst: .10 + random() * .2,
       energy: .88, health: 1, fear: 0, age: parent || archived ? 0 : random() * 22,
@@ -91,6 +92,7 @@ export class Ecosystem {
       generation, lineage, mutations: variation.mutations,
       brain: variation.brain, inputs: new Float32Array(NI), action: 'Explorando',
     };
+    this.river.sync(a);
     this.agents.push(a);
     this.byId.set(a.id, a);
     if (inherited) {
@@ -109,6 +111,10 @@ export class Ecosystem {
     if (!['raise', 'lower', 'forest', 'meadow', 'fire', 'dry', 'river'].includes(mode)) return;
     if (![x, z, radius].every(Number.isFinite)) return;
     brush(this.map, mode, clamp(x, -HALF, HALF), clamp(z, -HALF, HALF), clamp(radius, 5, 55));
+    if (mode === 'raise' || mode === 'lower' || mode === 'river') {
+      this.river.invalidate();
+      for (const agent of this.agents) this.river.sync(agent);
+    }
     this.edited = true;
   }
 
@@ -124,8 +130,8 @@ export class Ecosystem {
 
   visible(a, b) {
     const map = this.map;
-    const y = map[a.terrainCell] + 1.7;
-    const end = map[b.terrainCell] + 1.4;
+    const y = onWaterSurface(ground(map, a.x, a.z), a.swimming) + (a.swimming ? .65 : 1.7);
+    const end = onWaterSurface(ground(map, b.x, b.z), b.swimming) + (b.swimming ? .55 : 1.4);
     for (const t of [.32, .64]) {
       const at = tile(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t);
       if (map[at] > y + (end - y) * t + .65 || map[at + 1] > .94) return false;
@@ -231,22 +237,11 @@ export class Ecosystem {
     a.hidden = gait < .29 && map[oldTerrain + 1] > .54;
     const sprint = gait > .68;
     const pace = sprint ? 1.18 : a.hidden ? .32 : .73;
-    a.angle += turn * DT * 2.55;
-    a.speed = throttle * species.baseSpeed * pace * (.52 + a.energy * .48) *
-      (map[oldTerrain] < WATER ? .43 : 1);
+    const wanted = a.angle + turn * DT * 2.55;
+    a.speed = throttle * species.baseSpeed * pace * (.52 + a.energy * .48);
     a.action = a.hidden ? 'Ocultándose' : sprint ? 'Corriendo' : a.signal ? 'Emitiendo señal' : 'Explorando';
-    const x = a.x + Math.sin(a.angle) * a.speed * DT;
-    const z = a.z + Math.cos(a.angle) * a.speed * DT;
-    const newTerrain = tile(x, z);
-    if (Math.abs(x) > EDGE || Math.abs(z) > EDGE) {
-      a.angle = normalizeAngle(Math.atan2(-a.x, -a.z) + (this.random() - .5) * .8);
-    } else if (Math.abs(map[newTerrain] - map[oldTerrain]) < 11) {
-      a.x = x;
-      a.z = z;
-      a.terrainCell = newTerrain;
-    } else {
-      a.angle += .35;
-    }
+    const drank = this.river.step(a, wanted, this.random);
+    if (a.drinking) a.action = drank ? 'Bebiendo' : 'Buscando la orilla';
 
     const at = a.terrainCell;
     const heat = Math.abs(temperature - 19) / 19;
@@ -254,20 +249,18 @@ export class Ecosystem {
     a.thirst = clamp(a.thirst + DT * (.008 + .009 * heat + a.speed * .0010));
     a.energy = clamp(a.energy + DT * ((a.hunger < .74 && a.thirst < .70 ? .043 : .013) -
       a.speed * .0042 - Number(sprint) * .025 - heat * .014));
-    const water = map[at] <= WATER || map[tile(a.x + 3, a.z)] <= WATER || map[tile(a.x - 3, a.z)] <= WATER ||
-      map[tile(a.x, a.z + 3)] <= WATER || map[tile(a.x, a.z - 3)] <= WATER;
-    if (water && a.thirst > .16) {
+    if (drank) {
       a.thirst = Math.max(.03, a.thirst - DT * .34);
       a.drinks += DT;
-      a.action = 'Bebiendo';
     }
-    if (!a.species && interact > .55 && map[at + 2] > .14 && a.hunger > .23) {
+    const free = !a.swimming && !a.drinking;
+    if (free && !a.species && interact > .55 && map[at + 2] > .14 && a.hunger > .23) {
       const bite = Math.min(DT * .17, map[at + 2]);
       a.hunger = Math.max(.08, a.hunger - bite * 1.65);
       map[at + 2] -= bite;
       a.action = 'Alimentándose';
     }
-    if (a.species && interact > .55 && victim && victim.health > 0 && a.attackCD <= 0 && a.hunger > .25) {
+    if (free && a.species && interact > .55 && victim && !victim.swimming && victim.health > 0 && a.attackCD <= 0 && a.hunger > .25) {
       this.attack(a, victim);
     }
     if (!a.species && a.hidden && a.fear > .16 && this.time - a.lastShelter > 9) {
@@ -276,7 +269,7 @@ export class Ecosystem {
       this.shelter++;
     }
     if (Math.hypot(a.x - a.resourceX, a.z - a.resourceZ) > 35 && this.time - a.lastMove > 10 &&
-        (water || (!a.species && map[at + 2] > .67))) {
+        (drank || (!a.swimming && !a.species && map[at + 2] > .67))) {
       a.lastMove = this.time;
       a.resourceX = a.x;
       a.resourceZ = a.z;
@@ -287,9 +280,9 @@ export class Ecosystem {
       map[at + 4] * .23 + (a.age > 150 ? .05 : 0);
     a.health = clamp(a.health + DT * (damage ? -damage : a.energy > .67 ? .009 : 0));
     const index = a.species;
-    if (breed > .50 && a.age > 12 && a.cooldown <= 0 && a.energy > .49 && a.health > .64 &&
+    if (free && breed > .50 && a.age > 12 && a.cooldown <= 0 && a.energy > .49 && a.health > .64 &&
         a.hunger < .62 && a.thirst < .61 && allyD < 9 && ally?.health > .64 && ally.age > 12 &&
-        ally.cooldown <= 0 && ally.hunger < .7 && ally.thirst < .7 && ally.energy > .45 &&
+        !ally.swimming && !ally.drinking && ally.cooldown <= 0 && ally.hunger < .7 && ally.thirst < .7 && ally.energy > .45 &&
         this.counts[index] < species.max && this.agents.length < CAP) {
       const room = 1 - this.counts[index] / species.max;
       const probability = DT * room * breed * (.30 + Math.min(.85, this.fitness(a) / 90));

@@ -1,7 +1,7 @@
 import * as T from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SKY_PRESETS } from '../ui-data.js';
-import { clamp } from '../sim/config.js';
+import { WATER, clamp } from '../sim/config.js';
 import { ground } from '../sim/terrain.js';
 import { makeLand } from './land.js';
 import { Fauna } from './fauna.js';
@@ -26,15 +26,9 @@ export class World {
     this.lighting = makeLighting(this.scene, this.camera, this.renderer);
     const status = (key, ok) => { canvas.dataset[key] = ok ? 'ready' : 'fallback'; };
     canvas.dataset.renderer = 'webgl2';
-    this.land = makeLand(this.scene, assets, this.lighting.register, ok => status('textures', ok));
+    this.land = makeLand(this.scene, this.renderer, assets, this.lighting.register,
+      ok => status('textures', ok), this.lighting.skyUniforms.emitOnly);
     this.fauna = new Fauna(this.scene, assets, this.lighting.register, ok => status('models', ok));
-    this.lighting.environment.then(map => {
-      this.land.setReflection(map);
-      status('environment', true);
-    }).catch(error => {
-      status('environment', false);
-      console.warn('La iluminación usa el entorno procedural.', error);
-    });
     this.sun = this.land.sun.clone();
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -56,7 +50,7 @@ export class World {
     );
     this.ring.visible = false;
     this.scene.add(this.ring);
-    this.quality = 'balanced';
+    this.quality = 'high';
     this.weather = 'clear';
     this.markers = true;
     this.selectedId = 0;
@@ -73,19 +67,20 @@ export class World {
     this.draw = this.draw.bind(this);
     new ResizeObserver(this.resize).observe(canvas);
     const initialQuality = new URLSearchParams(location.search).get('quality');
-    this.setQuality(initialQuality || 'balanced');
+    this.setQuality(initialQuality || 'high');
     this.renderer.setAnimationLoop(this.draw);
   }
 
   resize() {
     const { clientWidth, clientHeight } = this.canvas;
     const width = Math.max(1, clientWidth), height = Math.max(1, clientHeight);
-    const pixelRatio = Math.min(devicePixelRatio, this.profile.dpr);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2, this.profile.dpr);
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
     this.lighting.cascades.updateFrustums();
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
+    this.land.resize(width, height, this.profile);
     if (this.profile.post) this.post?.resize(width, height, pixelRatio);
   }
 
@@ -173,7 +168,7 @@ export class World {
       const a = this.fauna.records.get(this.selectedId);
       if (a) {
         const target = this.controls.target;
-        this.home.set(a.x, ground(this.map, a.x, a.z) + 1.05, a.z).sub(target).multiplyScalar(Math.min(1, dt * 4));
+        this.home.set(a.x, Math.max(WATER, ground(this.map, a.x, a.z)) + 1.05, a.z).sub(target).multiplyScalar(Math.min(1, dt * 4));
         target.add(this.home);
         this.camera.position.add(this.home);
         const base = ground(this.map, this.camera.position.x, this.camera.position.z);
@@ -187,7 +182,8 @@ export class World {
     const preset = SKY_PRESETS[this.weather];
     this.sun.set(-Math.cos(angle) * .86, Math.max(.043, altitude), -.56).normalize();
     this.camera.updateMatrixWorld();
-    this.lighting.update(elapsed, this.sun, night, this.weather, preset);
+    this.lighting.update(elapsed, this.sun, night, this.weather, preset, this.profile);
+    this.canvas.dataset.environment = this.scene.environment ? 'ready' : 'fallback';
     this.renderer.toneMappingExposure = 1.06 - night * .085;
     if (elapsed - this.trackUpdate > .095) {
       this.land.tracks.update(this.fauna.records.values());
@@ -202,5 +198,6 @@ export class World {
     }
     if (this.profile.post && this.post) this.post.render(dt, this.weather, night, this.profile);
     else this.renderer.render(this.scene, this.camera);
+    this.canvas.dataset.reflections = this.land.reflectionReady ? 'planar' : 'sky';
   }
 }

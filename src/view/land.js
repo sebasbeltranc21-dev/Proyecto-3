@@ -1,10 +1,10 @@
 import * as T from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CHANNELS, GRID, HALF, SIZE, STEP, WATER, clamp, rng } from '../sim/config.js';
 import { ground, tile } from '../sim/terrain.js';
 import { terrainSurface } from './shaders/terrain.js';
 import { makeTracks, sway } from './shaders/foliage.js';
-import { waterSurface } from './shaders/water.js';
+import { makeRiverSurface } from './shaders/water.js';
 import { makeBurnScars, Wildfire } from './fire.js';
 
 const SUN = new T.Vector3(-.62, .58, -.52).normalize();
@@ -35,16 +35,6 @@ function makeTerrain(scene, field, scars, assets, register, onTextures) {
       geometry.computeBoundingSphere();
     },
   };
-}
-
-function makeWater(scene, depth) {
-  const { material, uniforms } = waterSurface(scene, depth, SUN);
-  const water = new T.Mesh(new T.PlaneGeometry(SIZE, SIZE).rotateX(-Math.PI / 2), material);
-  water.position.y = WATER;
-  water.renderOrder = 1;
-  water.userData.skipAO = true;
-  scene.add(water);
-  return uniforms;
 }
 
 // The outer ridges share the editable map's perimeter to hide the seam at every camera angle.
@@ -225,6 +215,22 @@ function shrubGeometry() {
   return result;
 }
 
+function smoothRock() {
+  const raw = new T.IcosahedronGeometry(1, 2);
+  raw.deleteAttribute('normal');
+  raw.deleteAttribute('uv');
+  const geometry = mergeVertices(raw);
+  raw.dispose();
+  const points = geometry.attributes.position;
+  for (let i = 0; i < points.count; i++) {
+    const x = points.getX(i), y = points.getY(i), z = points.getZ(i);
+    const relief = .91 + .17 * Math.sin(x * 8.5 + z * 4.8) * Math.sin(y * 6.1 - z * 5.0);
+    points.setXYZ(i, x * relief + y * .16, y * relief + z * .12, z * relief);
+  }
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
 function cover(scene, register) {
   const time = { value: 0 };
   const gust = { value: .33 };
@@ -236,8 +242,8 @@ function cover(scene, register) {
   const shrubMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .96 }), time, gust, tracks, .13, true, focus);
   const blade = grassGeometry(), shrub = shrubGeometry();
   const treeDepth = sway(new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking }), time, gust, tracks, .021, false);
-  const rockGeometry = new T.DodecahedronGeometry(1, 0);
-  const rockMaterial = new T.MeshStandardMaterial({ color: 0x9aa09e, roughness: .94, flatShading: true });
+  const rockGeometry = smoothRock();
+  const rockMaterial = new T.MeshStandardMaterial({ color: 0x9aa09e, roughness: .86 });
   for (const material of [treeMaterial, grassMaterial, shrubMaterial, rockMaterial]) register(material);
   const chunks = [];
   const random = rng(185513);
@@ -246,7 +252,7 @@ function cover(scene, register) {
       const trees = new T.InstancedMesh(nearPine, treeMaterial, 130);
       const grass = new T.InstancedMesh(blade, grassMaterial, 640);
       const shrubs = new T.InstancedMesh(shrub, shrubMaterial, 44);
-      const rock = new T.InstancedMesh(rockGeometry, rockMaterial, 28);
+      const rock = new T.InstancedMesh(rockGeometry, rockMaterial, 52);
       const centerX = (u + .5) * 64 - HALF, centerZ = (v + .5) * 64 - HALF;
       trees.castShadow = true;
       trees.customDepthMaterial = treeDepth;
@@ -272,7 +278,7 @@ function cover(scene, register) {
   let lastMap;
   return {
     time, gust, tracks, focus,
-    update(map) {
+    update(map, markRock) {
       lastMap = map;
       for (const chunk of chunks) {
         const { trees, grass, rock, shrubs, candidates } = chunk;
@@ -281,6 +287,18 @@ function cover(scene, register) {
           const { x, z, density, scale, angle } = c;
           const at = tile(x, z);
           const y = ground(map, x, z);
+          const depth = WATER - y;
+          if (index < 100 && depth >= -.26 && depth < 2.25 && density < .63 && rock.count < 52) {
+            const crest = .26 + scale * 1.50;
+            object.position.set(x, y + .07, z);
+            object.scale.set(.66 + scale * 1.72, crest, .54 + scale * 1.90);
+            object.rotation.set(.13 + density * .22, angle, .19);
+            object.updateMatrix();
+            rock.setMatrixAt(rock.count, object.matrix);
+            color.setHSL(.22 + scale * .37, .08 + density * .12, .28 + scale * .27);
+            rock.setColorAt(rock.count++, color);
+            if (depth < crest * .77) markRock(at / CHANNELS, .58 + scale * .42);
+          }
           if (y < WATER + .28) continue;
           object.position.set(x, y, z);
           object.rotation.set(0, angle, 0);
@@ -305,11 +323,13 @@ function cover(scene, register) {
             object.updateMatrix();
             shrubs.setMatrixAt(shrubs.count++, object.matrix);
           }
-          if (index < 28 && density < .24 && (y > 9 || y < 1.8)) {
+          if (index < 28 && density < .24 && (y > 9 || y < 1.8) && rock.count < 52) {
             object.scale.set(.8 + scale * 2.3, .58 + scale * 1.64, .8 + scale * 1.7);
             object.rotation.set(scale * .63, angle, .35);
             object.updateMatrix();
-            rock.setMatrixAt(rock.count++, object.matrix);
+            rock.setMatrixAt(rock.count, object.matrix);
+            color.setHSL(.19 + scale * .12, .07 + density * .12, .35 + scale * .29);
+            rock.setColorAt(rock.count++, color);
           }
         }
         chunk.grassCount = grass.count;
@@ -360,7 +380,7 @@ function makeRain(scene) {
   };
 }
 
-export function makeLand(scene, assets, register, onTextures) {
+export function makeLand(scene, renderer, assets, register, onTextures, emitOnly) {
   const bytes = new Uint8Array(GRID * GRID * 4);
   const height = new Uint8Array(GRID * GRID * 4);
   const field = new T.DataTexture(bytes, GRID, GRID);
@@ -369,7 +389,11 @@ export function makeLand(scene, assets, register, onTextures) {
   const scars = makeBurnScars();
   const wildfire = new Wildfire(scene);
   const terrain = makeTerrain(scene, field, scars.texture, assets, register, onTextures);
-  const water = makeWater(scene, depth);
+  const riverSurface = makeRiverSurface(scene, renderer, depth, SUN, emitOnly);
+  const water = riverSurface.uniforms;
+  const rockFoam = (index, strength) => {
+    height[index * 4 + 2] = Math.max(height[index * 4 + 2], Math.round(strength * 255));
+  };
   const forest = cover(scene, register);
   const rain = makeRain(scene);
   const updateRidges = mountainRing(scene, terrain.material);
@@ -381,10 +405,8 @@ export function makeLand(scene, assets, register, onTextures) {
       wildfire.reset();
       scars.reset();
     },
-    setReflection(map) {
-      water.reflectionMap.value = map;
-      water.reflectionReady.value = 1;
-    },
+    resize: riverSurface.resize,
+    get reflectionReady() { return water.mirrored.value > .5; },
     update(map, time) {
       wildfire.setMap(map);
       scars.update(map, time);
@@ -393,12 +415,15 @@ export function makeLand(scene, assets, register, onTextures) {
         bytes[j + 1] = Math.round(map[i + 1] * 255);
         bytes[j + 2] = Math.round(map[i + 2] * 255);
         bytes[j + 3] = Math.round(map[i + 4] * 255);
-        height[j] = Math.round(clamp((WATER - map[i]) / 20 + .5) * 255);
+        const packed = Math.round(clamp((WATER - map[i] + 64) / 80) * 65535);
+        height[j] = packed >> 8;
+        height[j + 1] = packed & 255;
+        height[j + 2] = 0;
       }
       field.needsUpdate = depth.needsUpdate = true;
       terrain.update(map);
       updateRidges(map);
-      forest.update(map);
+      forest.update(map, rockFoam);
     },
     tick(time, night, weather, sun, camera, profile, focus) {
       water.elapsed.value = forest.time.value = time;

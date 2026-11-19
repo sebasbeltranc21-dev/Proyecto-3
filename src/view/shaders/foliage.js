@@ -60,6 +60,23 @@ export function sway(material, time, gust, trackMap, strength, reactive, focus) 
         #include <begin_vertex>
         transformed=foliageBend(transformed,instanceMatrix);
       `);
+    if (material.isMeshStandardMaterial) {
+      shader.vertexShader = 'varying vec3 vSurface;\n' + shader.vertexShader.replace(
+        '#include <begin_vertex>', '#include <begin_vertex>\n vSurface=position;',
+      );
+      shader.fragmentShader = 'varying vec3 vSurface;\n' + shader.fragmentShader.replace(
+        '#include <color_fragment>', `
+        #include <color_fragment>
+        float detail=1.-smoothstep(.30,1.30,length(fwidth(vSurface))*40.);
+        float lanes=sin(vSurface.y*189.+sin(vSurface.z*55.+vSurface.x*11.)*3.5);
+        float needles=sin(vSurface.x*78.+vSurface.z*87.+vSurface.y*31.);
+        diffuseColor.rgb *= 1.+detail*(lanes*.13+needles*.095);
+        `,
+      ).replace('#include <roughnessmap_fragment>', `
+        #include <roughnessmap_fragment>
+        roughnessFactor*=.93+.065*sin(vSurface.x*7.9+vSurface.y*9.4);
+      `);
+    }
     if (focus) {
       shader.uniforms.followFocus = focus;
       shader.vertexShader = 'varying vec3 vFoliageWorld;\n' + shader.vertexShader.replace(
@@ -81,6 +98,6 @@ export function sway(material, time, gust, trackMap, strength, reactive, focus) 
       );
     }
   };
-  material.customProgramCacheKey = () => 'foliage-v3-' + strength + '-' + reactive + '-' + Boolean(focus);
+  material.customProgramCacheKey = () => 'foliage-v4-' + strength + '-' + reactive + '-' + Boolean(focus);
   return material;
 }
