@@ -1,0 +1,13 @@
+node_modules/
+dist/
+.vercel/
+.codex/
+.env*
+!.env.example
+*.blend1
+*.blend2
+*.psd
+*.fbx
+assets/source/
+*.log
+.DS_Store
