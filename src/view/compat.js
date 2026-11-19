@@ -327,6 +327,7 @@ export class CompatibilityWorld {
     if (now - this.last < .032) return;
     const dt = Math.min(.1, now - this.last);
     this.last = now;
+    if (this.duelOpen) return;
     if (this.map) this.fauna.advance(dt, this.map);
     this.documentary.frame(dt, this.fauna.records.get(this.selectedId), this.map);
     this.camera.updateMatrixWorld();

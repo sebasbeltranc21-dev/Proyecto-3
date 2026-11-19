@@ -145,6 +145,7 @@ export class World {
     const elapsed = timestamp / 1000;
     const dt = Math.min(.10, elapsed - (this.last || elapsed));
     this.last = elapsed;
+    if (this.duelOpen) return;
     this.frames++;
     if (elapsed - this.fpsStart >= 1) {
       this.fps = Math.round(this.frames / (elapsed - this.fpsStart));

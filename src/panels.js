@@ -18,6 +18,7 @@ export function shell() {
       <div class="weather-bar" role="group" aria-label="Clima del bioma">${weatherButtons}</div>
       <div class="sim-top">
         <span class="weather-readout" id="weather-readout">21 °C</span>
+        <button class="quiet duel-launch" data-cmd="duel" id="open-duel" type="button" title="Duelo Evolutivo" aria-label="Duelo Evolutivo">${icon('brain', 17)} <span>Duelo Evolutivo</span></button>
         <button class="quiet icon-btn" data-cmd="audio" id="audio" type="button" title="Activar sonido" aria-label="Activar sonido" aria-pressed="false">${icon('mute')}</button>
         <button class="quiet icon-btn" data-cmd="settings" type="button" title="Ajustes" aria-label="Ajustes" aria-expanded="false">${icon('sliders')}</button>
       </div>

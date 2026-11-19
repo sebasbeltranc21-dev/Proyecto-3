@@ -44,6 +44,8 @@ function start(world) {
   const documentary = get('documentary');
   const exitButton = get('exit-documentary');
   const audio = new AudioEngine();
+  const duelButton = get('open-duel');
+  let duel, resumeSpeed;
   world.audio = audio;
   audioButton.disabled = !audio.Context;
 
@@ -141,11 +143,35 @@ function start(world) {
     app.querySelector('[data-cmd="markers"]').setAttribute('aria-pressed', visible);
   }
 
+  async function openDuel() {
+    duelButton.disabled = true;
+    try {
+      if (!duel) {
+        const { createDuel } = await import('./duel/panel.js');
+        duel = createDuel(() => {
+          world.duelOpen = false;
+          if (resumeSpeed) setSpeed(resumeSpeed);
+          duelButton.focus();
+        });
+      }
+      resumeSpeed = speed;
+      duel.open();
+      world.duelOpen = true;
+      if (resumeSpeed) setSpeed(0);
+    } catch (error) {
+      console.error(error);
+      announce('No se pudo abrir el Duelo Evolutivo.');
+    } finally {
+      duelButton.disabled = false;
+    }
+  }
+
   const commands = {
     pause: () => setSpeed(speed ? 0 : previous),
     reset: () => { reset(); announce('Simulación reiniciada · semilla ' + seed); },
     camera: () => world.resetView(),
     audio: toggleAudio,
+    duel: openDuel,
     markers: () => setMarkers(!world.markers),
     settings: () => {
       const panel = get('settings');
@@ -272,6 +298,7 @@ function start(world) {
   c.addEventListener('pointercancel', () => { anchor = null; world.ring.visible = false; });
   c.addEventListener('pointerleave', () => { world.ring.visible = false; });
   window.addEventListener('keydown', event => {
+    if (world.duelOpen) return;
     if (!documentary.hidden) {
       if (event.key === 'Escape') { event.preventDefault(); exitDocumentary(); }
       return;

@@ -22,12 +22,12 @@ function targetSensor(input, at, a, x, z, proximity) {
 }
 
 export class Ecosystem {
-  constructor(seed) {
+  constructor(seed, { map = createTerrain(seed), props, population = INITIAL } = {}) {
     this.seed = seed;
     this.random = rng(seed);
-    this.map = createTerrain(seed);
+    this.map = map;
     this.collisions = new CollisionIndex();
-    this.collisions.setMap(this.map);
+    this.collisions.setMap(this.map, props);
     this.river = new RiverNavigation(this.map, this.collisions);
     this.agents = [];
     this.fallen = [];
@@ -49,11 +49,11 @@ export class Ecosystem {
     this.shelter = 0;
     this.migrations = 0;
     this.generation = 1;
-    this.counts = [...INITIAL];
+    this.counts = [...population];
     this.weather = 'clear';
     this.climate = { clear: [21, 1, 0], rain: [14, .78, .010], fog: [11, .52, .002], heat: [37, .91, -.009] };
     this.edited = true;
-    for (const [species, count] of INITIAL.entries()) {
+    for (const [species, count] of population.entries()) {
       for (let i = 0; i < count; i++) this.addAgent(species);
     }
     this.record();
@@ -470,15 +470,7 @@ export class Ecosystem {
     this.time = this.ticks * DT;
     this.night = darkness(this.hour);
     const [temperature, visibility, moisture] = this.climate[this.weather];
-    this.rebuildIndex();
-    this.fallen = this.fallen.filter(a => this.time - a.fallAt < FALL_DURATION);
-    this.collisions.rebuild(this.agents, this.fallen);
-    const length = this.agents.length;
-    for (let i = 0; i < length; i++) {
-      const a = this.agents[i];
-      if (a.health > 0) this.updateAgent(a, temperature, visibility);
-    }
-    this.prune();
+    this.advancePopulation(temperature, visibility);
     if (this.ticks % 40 === 0) {
       this.maintainTerrain(moisture);
       this.refreshColliders();
@@ -494,6 +486,18 @@ export class Ecosystem {
         this.emit(`Reserva · ${species.name} #${next.id}`, 'reserve');
       }
     }
+  }
+
+  advancePopulation(temperature, visibility) {
+    this.rebuildIndex();
+    this.fallen = this.fallen.filter(a => this.time - a.fallAt < FALL_DURATION);
+    this.collisions.rebuild(this.agents, this.fallen);
+    const length = this.agents.length;
+    for (let i = 0; i < length; i++) {
+      const a = this.agents[i];
+      if (a.health > 0) this.updateAgent(a, temperature, visibility);
+    }
+    this.prune();
   }
 
   inspect(id) {
