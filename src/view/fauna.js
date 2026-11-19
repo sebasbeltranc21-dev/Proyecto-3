@@ -2,6 +2,7 @@ import * as T from 'three';
 import { CAP, STRIDE } from '../sim/config.js';
 import { ground } from '../sim/terrain.js';
 import { AnimalModels } from './models.js';
+import { newLocomotion } from './locomotion.js';
 
 const unit = new T.IcosahedronGeometry(1, 1);
 const LEG = new T.BoxGeometry(1, 1, 1);
@@ -62,11 +63,12 @@ export class Fauna {
       const id = items[at];
       const x = items[at + 2], z = items[at + 3], angle = items[at + 4];
       const record = this.records.get(id) ?? {
-        id, x, z, angle, species: items[at + 1], y: 0, stride: 0, crouch: 0, attack: 0, phase: id % 6,
+        id, x, z, angle, species: items[at + 1], y: 0, pose: newLocomotion(id),
       };
       Object.assign(record, {
         tx: x, tz: z, ta: angle, pace: items[at + 5], hidden: items[at + 6], live: true,
         gait: items[at + 8], coatTrait: items[at + 9], sizeTrait: items[at + 10], attacking: items[at + 11],
+        fear: items[at + 12], signaling: items[at + 13], feeding: items[at + 14],
       });
       this.records.set(id, record);
     }
@@ -79,11 +81,15 @@ export class Fauna {
     const blend = 1 - Math.exp(-dt * 13);
     this.selection.visible = this.records.has(tracked);
     for (const a of this.records.values()) {
-      a.x += (a.tx - a.x) * blend;
-      a.z += (a.tz - a.z) * blend;
+      const dx = (a.tx - a.x) * blend, dz = (a.tz - a.z) * blend;
+      a.x += dx;
+      a.z += dz;
+      a.distance = Math.hypot(dx, dz);
       a.y = ground(map, a.x, a.z);
       const delta = a.ta - a.angle;
-      a.angle += Math.atan2(Math.sin(delta), Math.cos(delta)) * blend;
+      const yaw = Math.atan2(Math.sin(delta), Math.cos(delta)) * blend;
+      a.angle += yaw;
+      a.turnRate = yaw / Math.max(dt, .001);
       const sin = Math.sin(a.angle), cos = Math.cos(a.angle);
       const size = a.species ? 1.16 : 1.24;
       const crouch = a.hidden ? .71 : 1;
@@ -114,7 +120,7 @@ export class Fauna {
       }
       row++;
     }
-    this.models.draw(this.records.values(), camera, dt, time, profile, tracked);
+    this.models.draw(this.records.values(), camera, dt, time, map, profile, tracked);
     for (const mesh of this.meshes) {
       mesh.visible = !this.models.ready;
       if (!mesh.visible) continue;

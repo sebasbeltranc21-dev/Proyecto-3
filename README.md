@@ -2,7 +2,7 @@
 
 Simulador 3D de neuroevolución. Presas y depredadores perciben el entorno, actúan con redes neuronales individuales y transmiten sus pesos a nuevas generaciones. El jugador modifica la cuenca en tiempo real y puede inspeccionar las activaciones, el linaje, la aptitud y las mutaciones de una criatura.
 
-**Fase 2**. La versión actual incorpora fauna esculpida con GLB Draco y Meshopt, biomas PBR KTX2, vegetación reactiva y perfiles Bajo a Ultra. Consulta el [pipeline visual y guía de recursos](docs/fase-2.md).
+**Fase 2**. La versión actual incorpora fauna esculpida con GLB Draco y Meshopt, biomas PBR KTX2, vegetación reactiva y perfiles Bajo a Ultra. Consulta el [pipeline visual y guía de recursos](docs/fase-2.md) y la [actualización de fuego, fauna y paisaje](docs/actualizacion-visual.md).
 
 ## Desarrollo
 

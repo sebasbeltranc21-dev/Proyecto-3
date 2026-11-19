@@ -110,9 +110,13 @@ export class World {
     this.resize();
   }
 
-  setMap(map) {
+  setMap(map, time) {
     this.map = map;
-    this.land.update(map);
+    this.land.update(map, time);
+  }
+
+  resetEffects() {
+    this.land.resetEffects();
   }
 
   locate(x, y) {

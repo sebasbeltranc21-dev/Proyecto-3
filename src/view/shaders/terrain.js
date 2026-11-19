@@ -14,7 +14,7 @@ function pixel(values, color) {
 const varying = 'varying vec3 vLand; varying vec3 vLandNormal;\n';
 const samplers = names.map(name => `uniform sampler2D ${name}Color, ${name}Surface;`).join('\n');
 const functions = `
-uniform sampler2D biomeField;
+uniform sampler2D biomeField, burnField;
 uniform float snowLine, rainfall;
 struct BiomeSample { vec3 color; vec4 surface; vec2 bump; };
 
@@ -38,28 +38,50 @@ BiomeSample interpolateBiome(BiomeSample a, BiomeSample b, float t) {
   return BiomeSample(mix(a.color,b.color,t),mix(a.surface,b.surface,t),mix(a.bump,b.bump,t));
 }
 BiomeSample shadeLand(vec3 wp, vec3 worldNormal) {
-  vec4 ecology=texture2D(biomeField,wp.xz/320.+.5);
-  float n=landNoise(wp.xz*.11);
+  vec2 field=wp.xz/320.+.5;
+  float outside=smoothstep(159.5,178.,max(abs(wp.x),abs(wp.z)));
+  vec4 ecology=mix(texture2D(biomeField,field),vec4(.27,.34,.53,0.),outside);
+  float n=landNoise(wp.xz*.079+21.);
+  float broad=landNoise(wp.xz*.041);
+  float grains=landNoise(wp.xz*1.66+5.3);
   float slope=1.-max(0.,worldNormal.y);
-  float shore=1.-smoothstep(-1.1,2.9+n*1.4,wp.y);
-  float stone=smoothstep(.14,.48,slope+n*.13)+.41*smoothstep(20.,36.,wp.y);
-  float frost=smoothstep(snowLine-2.4,snowLine+3.1,wp.y+n*2.2)*(1.-smoothstep(.12,.49,slope));
-  vec2 warped=wp.xz*.40+.95*vec2(landNoise(wp.xz*.071+23.),landNoise(wp.xz*.087-19.));
+  float shore=(1.-smoothstep(-.95,2.72+n*1.37,wp.y))*(1.-outside);
+  float stone=smoothstep(.11,.43,slope+n*.127)+.48*smoothstep(18.,39.,wp.y);
+  float frostline=snowLine+outside*16.+(broad-.5)*3.4;
+  float frost=smoothstep(frostline-2.3,frostline+3.8,wp.y+n*2.8)*(1.-smoothstep(.15,.57,slope));
+  vec2 warped=wp.xz*.48+.91*vec2(landNoise(wp.xz*.071+23.),landNoise(wp.xz*.087-19.));
   BiomeSample result=sampleTop(grassColor,grassSurface,warped);
-  result.color*=mix(vec3(.36,.64,.32),vec3(.66,1.03,.49),clamp(ecology.b*.57+n*.57,0.,1.));
-  if(shore>.006) result=interpolateBiome(result,sampleTop(sandColor,sandSurface,wp.xz*.61),shore);
-  if(stone>.006) result=interpolateBiome(result,sampleRock(wp,worldNormal),min(stone,1.));
-  if(frost>.006) result=interpolateBiome(result,sampleTop(snowColor,snowSurface,wp.xz*.54),frost*.95);
-  result.color=mix(result.color,result.color*vec3(.18,.122,.083),ecology.a*.89);
-  result.color*=1.-rainfall*(.10+ecology.r*.20);
-  result.surface.b=mix(result.surface.b,.34,rainfall*.46);
+  vec3 lush=mix(vec3(.33,.64,.295),vec3(.63,1.07,.455),clamp(ecology.b*.50+n*.65,0.,1.));
+  result.color*=lush*(.80+broad*.26+grains*.18)*(1.-ecology.g*.16);
+  if(shore>.006) {
+    BiomeSample sand=sampleTop(sandColor,sandSurface,wp.xz*.69+vec2(n*.38,broad*.33));
+    float wet=(1.-smoothstep(-1.3,1.65+n*.31,wp.y))*.76+rainfall*.21;
+    sand.color*=mix(vec3(1.04,1.015,.93),vec3(.48,.54,.47),wet);
+    sand.surface.b=mix(sand.surface.b,.32,wet*.68);
+    result=interpolateBiome(result,sand,shore);
+  }
+  if(stone>.006) {
+    BiomeSample rock=sampleRock(wp+vec3(n,broad,grains*.18)*.56,worldNormal);
+    float stratum=sin(wp.y*.71+n*2.35+wp.x*.051)*.5+.5;
+    rock.color*=mix(vec3(.68,.75,.74),vec3(1.15,1.09,.98),broad*.57+stratum*.32+grains*.11);
+    result=interpolateBiome(result,rock,min(stone,1.));
+  }
+  if(frost>.006) result=interpolateBiome(result,sampleTop(snowColor,snowSurface,wp.xz*.54),frost*.96);
+  float history=texture2D(burnField,field).r*(1.-outside);
+  float ash=smoothstep(.085,.79,max(history,ecology.a)*(.74+broad*.26+grains*.25));
+  vec3 charred=mix(vec3(.012,.007,.004),vec3(.069,.061,.048),n*.55+grains*.35);
+  result.color=mix(result.color,charred,ash*.94);
+  result.color*=1.-rainfall*(.075+ecology.r*.16);
+  result.surface.b=mix(result.surface.b,.36,rainfall*.40);
+  result.surface.b=mix(result.surface.b,.94,ash*.83);
+  result.bump*=1.-ash*.35;
   return result;
 }
 `;
 
-export function terrainSurface(material, field, assets, register, onReady) {
+export function terrainSurface(material, field, scars, assets, register, onReady) {
   const neutral = pixel([128, 128, 224, 255], false);
-  const uniforms = { biomeField: { value: field }, snowLine: { value: 35 }, rainfall: { value: 0 } };
+  const uniforms = { biomeField: { value: field }, burnField: { value: scars }, snowLine: { value: 35 }, rainfall: { value: 0 } };
   names.forEach((name, index) => {
     uniforms[name + 'Color'] = { value: pixel([...colors[index], 255], true) };
     uniforms[name + 'Surface'] = { value: neutral };
@@ -92,7 +114,7 @@ export function terrainSurface(material, field, assets, register, onReady) {
         reflectedLight.indirectSpecular *= mix(.66,1.,terrain.surface.a);
       `);
   };
-  material.customProgramCacheKey = () => 'biome-pbr-v2';
+  material.customProgramCacheKey = () => 'biome-pbr-v3';
   register(material);
   Promise.all(names.map(async name => {
     const [color, surface] = await Promise.all([assets.texture(name + '-color', true), assets.texture(name + '-surface')]);

@@ -58,6 +58,7 @@ function start(world) {
 
   function reset() {
     world.fauna.records.clear();
+    world.resetEffects?.();
     world.selectedId = 0;
     world.weather = 'clear';
     world.time = 0;
@@ -131,7 +132,7 @@ function start(world) {
     if (data.type !== 'snapshot') return;
     const recycle = buffer => worker.postMessage({ type: 'recycle', buffer }, [buffer]);
     if (data.version !== version) { recycle(data.agents.buffer); return; }
-    if (data.terrain) world.setMap(data.terrain);
+    if (data.terrain) world.setMap(data.terrain, data.stats.time);
     world.fauna.snapshot(data.agents, data.length);
     recycle(data.agents.buffer);
     stats = data.stats;

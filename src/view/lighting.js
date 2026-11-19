@@ -41,6 +41,7 @@ export function makeLighting(scene, camera, renderer) {
   const materials = new WeakSet();
   const nightFog = new T.Color(0x152633);
   const normalSun = new T.Color();
+  // r183 applies soft filtering through PCFShadowMap.
   renderer.shadowMap.type = T.PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
   function register(material) {
@@ -67,7 +68,7 @@ export function makeLighting(scene, camera, renderer) {
         shadow.mapSize.setScalar(profile.shadows);
       }
       shadow.normalBias = .31;
-      shadow.radius = 2;
+      shadow.radius = profile.shadows >= 1280 ? 2.65 : 2.10;
     }
   }
   const environment = new HDRLoader().loadAsync(asset('terrain/forest.hdr')).then(source => {

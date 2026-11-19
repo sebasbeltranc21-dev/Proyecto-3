@@ -5,20 +5,21 @@ import { ground, tile } from '../sim/terrain.js';
 import { terrainSurface } from './shaders/terrain.js';
 import { makeTracks, sway } from './shaders/foliage.js';
 import { waterSurface } from './shaders/water.js';
+import { makeBurnScars, Wildfire } from './fire.js';
 
 const SUN = new T.Vector3(-.62, .58, -.52).normalize();
-function makeTerrain(scene, field, assets, register, onTextures) {
+function makeTerrain(scene, field, scars, assets, register, onTextures) {
   const resolution = 148;
   const geometry = new T.PlaneGeometry(SIZE, SIZE, resolution, resolution).rotateX(-Math.PI / 2);
   const material = new T.MeshStandardMaterial({ color: 0xffffff, roughness: 1 });
-  const uniforms = terrainSurface(material, field, assets, register, onTextures);
+  const uniforms = terrainSurface(material, field, scars, assets, register, onTextures);
   const mesh = new T.Mesh(geometry, material);
   mesh.receiveShadow = true;
   scene.add(mesh);
   const position = geometry.attributes.position;
   let previous = null;
   return {
-    mesh, uniforms,
+    mesh, material, uniforms,
     update(map) {
       let changed = !previous;
       if (previous) {
@@ -41,34 +42,33 @@ function makeWater(scene, depth) {
   const water = new T.Mesh(new T.PlaneGeometry(SIZE, SIZE).rotateX(-Math.PI / 2), material);
   water.position.y = WATER;
   water.renderOrder = 1;
+  water.userData.skipAO = true;
   scene.add(water);
   return uniforms;
 }
 
 // The outer ridges share the editable map's perimeter to hide the seam at every camera angle.
-function mountainRing(scene, register) {
-  const segments = 224;
-  const rings = [0, 5, 12, 21, 33, 47, 64, 82, 103, 126, 151, 177, 206, 237, 270, 312, 360];
-  const positions = [], indices = [], colors = [], points = [];
-  const meadow = new T.Color(0x6f8051), granite = new T.Color(0x656c61), frost = new T.Color(0xc1c9be);
-  const shade = new T.Color();
+function mountainRing(scene, material) {
+  const segments = 280;
+  const rings = Array.from({ length: 32 }, (_, index) => 360 * (index / 31) ** 1.45);
+  const positions = [], indices = [], points = [];
   const blend = t => t * t * (3 - 2 * t);
   for (const [row, distance] of rings.entries()) {
     for (let index = 0; index <= segments; index++) {
-      const angle = index / segments * Math.PI * 2;
+      const angle = (index % segments) / segments * Math.PI * 2;
       const cos = Math.cos(angle), sin = Math.sin(angle);
       const edge = HALF / Math.max(Math.abs(cos), Math.abs(sin));
       const x = cos * (edge + distance), z = sin * (edge + distance);
-      const shoulder = blend(clamp(distance / 74));
-      const envelope = Math.sin(Math.min(1, distance / 322) * Math.PI) ** 1.64;
-      const ridge = Math.abs(Math.sin(angle * 4.0 + .85) * .62 + Math.sin(angle * 7.0 + .4) * .38) ** 1.36;
-      const fold = .72 + Math.cos(distance * .038 + angle * 7.0) * .22;
-      const details = 3.7 * Math.sin(x * .064 + z * .084) + 2.2 * Math.sin(x * .17 - z * .12) +
-        .95 * Math.sin(x * .31 + z * .087);
-      const mountain = 9 + envelope * (19 + ridge * 103 + Math.abs(Math.sin(angle * 22 + distance * .026)) * 14) * fold + details;
+      const shoulder = blend(clamp(distance / 72));
+      const envelope = Math.sin(Math.min(1, distance / 325) * Math.PI) ** 1.5;
+      const ridge = Math.abs(Math.sin(angle * 4 + .85) * .57 + Math.sin(angle * 7 + .4) * .43) ** 1.26;
+      const fold = .79 + Math.cos(distance * .036 + angle * 6.2 + .8 * Math.sin(angle * 16)) * .20;
+      const details = 3.1 * Math.sin(x * .065 + z * .083) + 1.7 * Math.sin(x * .153 - z * .124) +
+        .74 * Math.sin(x * .301 + z * .092);
+      const crag = Math.abs(Math.sin(angle * 18.0 + distance * .024)) ** 1.37;
+      const mountain = 8.6 + envelope * (19 + ridge * 109 + crag * 12) * fold + details;
       points.push([cos * edge, sin * edge, shoulder, mountain]);
       positions.push(x, mountain, z);
-      colors.push(0, 0, 0);
       if (row + 1 < rings.length && index < segments) {
         const i = row * (segments + 1) + index, j = i + segments + 1;
         indices.push(i, i + 1, j, i + 1, j + 1, j);
@@ -77,15 +77,13 @@ function mountainRing(scene, register) {
   }
   const geometry = new T.BufferGeometry();
   geometry.setAttribute('position', new T.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('color', new T.Float32BufferAttribute(colors, 3));
   geometry.setIndex(indices);
-  const material = new T.MeshStandardMaterial({ vertexColors: true, roughness: .97, side: T.DoubleSide });
-  register(material);
   const mesh = new T.Mesh(geometry, material);
   mesh.receiveShadow = true;
   scene.add(mesh);
-  const position = geometry.attributes.position, color = geometry.attributes.color;
+  const position = geometry.attributes.position;
   const last = new Float32Array(points.length).fill(Infinity);
+  const seam = new T.Vector3();
   return map => {
     let dirty = false;
     for (const [i, [x, z, mix, mountain]] of points.entries()) {
@@ -94,15 +92,18 @@ function mountainRing(scene, register) {
       last[i] = height;
       dirty = true;
       position.setY(i, height);
-      const broad = .5 + .5 * Math.sin(position.getX(i) * .080 - position.getZ(i) * .077);
-      const talus = clamp((height - 13) / 42 + broad * .25);
-      shade.copy(meadow).lerp(granite, talus).lerp(frost, clamp((height - 53 + broad * 10) / 23) * .92);
-      shade.multiplyScalar(.82 + broad * .22);
-      color.setXYZ(i, shade.r, shade.g, shade.b);
     }
     if (!dirty) return;
-    position.needsUpdate = color.needsUpdate = true;
+    position.needsUpdate = true;
     geometry.computeVertexNormals();
+    const normals = geometry.attributes.normal;
+    for (let row = 0; row < rings.length; row++) {
+      const a = row * (segments + 1), b = a + segments;
+      seam.set(normals.getX(a) + normals.getX(b), normals.getY(a) + normals.getY(b), normals.getZ(a) + normals.getZ(b)).normalize();
+      normals.setXYZ(a, seam.x, seam.y, seam.z);
+      normals.setXYZ(b, seam.x, seam.y, seam.z);
+    }
+    normals.needsUpdate = true;
     geometry.computeBoundingSphere();
   };
 }
@@ -122,25 +123,68 @@ function tint(geometry, value, variation = .15) {
 }
 
 function pine(detail) {
-  const branches = [tint(new T.CylinderGeometry(.12, .25, 2.4, detail ? 6 : 4).translate(0, 1.2, 0), 0x6d5136)];
-  const shades = [0x344e26, 0x486137, 0x61713c, 0x6e8047];
-  const tiers = detail ? [0, 1, 2, 3] : [0, 2, 3];
-  for (const i of tiers) {
-    const radius = 1.7 - .27 * i;
-    const y = 1.61 + i * 1.01;
-    const cone = new T.CylinderGeometry(.11, radius, 2.29 - i * .17, detail ? 9 : 5, 1);
-    const positions = cone.attributes.position;
-    for (let j = 0; j < positions.count; j++) {
-      const x = positions.getX(j), z = positions.getZ(j);
-      const spread = 1 + Math.sin(Math.atan2(z, x) * 5 + i) * .13;
-      positions.setXYZ(j, x * spread, positions.getY(j) + Math.sin(x * 6 + z * 9 + i) * .23, z * spread);
+  const bark = tint(new T.CylinderGeometry(.04, .24, 5.98, detail ? 8 : 5).translate(0, 2.99, 0),
+    0x6c523d, .22);
+  bark.deleteAttribute('uv');
+  const random = rng(2466);
+  const positions = [], colors = [], indices = [];
+  const foliage = new T.BufferGeometry();
+  const light = new T.Color(), shadow = new T.Color();
+  const total = detail ? 10 : 7;
+  for (let tier = 0; tier < total; tier++) {
+    const fraction = tier / total;
+    const y = 1.46 + fraction * 4.86;
+    const length = (.23 + 1.82 * (1 - fraction) ** .84) * (.88 + random() * .22);
+    const branches = detail ? 6 : 5;
+    for (let branch = 0; branch < branches; branch++) {
+      const a = branch / branches * 6.2831853 + tier * 1.83 + (random() - .5) * .47;
+      const sweep = .85 + random() * .29;
+      const lengthHere = length * sweep;
+      const rise = (.155 + random() * .37) * (1 - fraction * .64);
+      const palette = random();
+      light.setHSL(.235 + palette * .076 + fraction * .012, .34 + palette * .12, .25 + fraction * .12 + palette * .08);
+      shadow.copy(light).multiplyScalar(.57 + palette * .11);
+      const spray = (axis, root, size, breadth, peak) => {
+        const base = positions.length / 3;
+        const sin = Math.sin(axis), cos = Math.cos(axis);
+        const points = [
+          [0, 0, 0], [.35, -.065, -breadth], [.67, -.12, -breadth * .75],
+          [1.0, .075 + rise, 0], [.64, -.105, breadth * .84], [.28, -.045, breadth],
+          [.39, peak, -.045], [.43, -.19, .021],
+        ];
+        for (const [i, [along, h, cross]] of points.entries()) {
+          positions.push(cos * (root + along * size) - sin * cross * size, y + h * size,
+            sin * (root + along * size) + cos * cross * size);
+          const tint = i === 6 || i === 3 ? light : shadow;
+          colors.push(tint.r, tint.g, tint.b);
+        }
+        for (let i = 0; i < 6; i++) {
+          const j = (i + 1) % 6;
+          indices.push(base + i, base + 6, base + j, base + i, base + j, base + 7);
+        }
+      };
+      spray(a, .02, lengthHere, .26 + palette * .08, .225 + rise * .30);
+      if (detail && tier < total - 2 && branch % 2 === 0) {
+        spray(a + .28, lengthHere * .21, lengthHere * .68, .23, .21);
+      }
     }
-    cone.rotateY(i * 1.8).translate(0, y, 0);
-    cone.computeVertexNormals();
-    branches.push(tint(cone, shades[i], .23));
   }
-  const geometry = mergeGeometries(branches);
-  for (const branch of branches) branch.dispose();
+  const tip = positions.length / 3;
+  for (let side = 0; side < 5; side++) {
+    const angle = side / 5 * Math.PI * 2;
+    positions.push(Math.cos(angle) * .31, 5.73, Math.sin(angle) * .31);
+    colors.push(light.r, light.g, light.b);
+    indices.push(tip + side, tip + 5, tip + (side + 1) % 5);
+  }
+  positions.push(0, 6.38, 0);
+  colors.push(light.r * 1.03, light.g * 1.06, light.b);
+  foliage.setAttribute('position', new T.Float32BufferAttribute(positions, 3));
+  foliage.setAttribute('color', new T.Float32BufferAttribute(colors, 3));
+  foliage.setIndex(indices);
+  foliage.computeVertexNormals();
+  const crown = foliage.toNonIndexed();
+  const geometry = mergeGeometries([bark, crown]);
+  for (const part of [bark, crown, foliage]) part.dispose();
   return geometry;
 }
 
@@ -186,10 +230,11 @@ function cover(scene, register) {
   const gust = { value: .33 };
   const tracks = makeTracks();
   const nearPine = pine(true), farPine = pine(false);
-  const treeMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .89, flatShading: true }), time, gust, tracks, .024, false);
+  const treeMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .95, side: T.DoubleSide }), time, gust, tracks, .021, false);
   const grassMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, color: 0xc9dcb0, side: T.DoubleSide, roughness: .89 }), time, gust, tracks, .18, true);
-  const shrubMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .98, flatShading: true }), time, gust, tracks, .16, true);
+  const shrubMaterial = sway(new T.MeshStandardMaterial({ vertexColors: true, roughness: .96 }), time, gust, tracks, .13, true);
   const blade = grassGeometry(), shrub = shrubGeometry();
+  const treeDepth = sway(new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking }), time, gust, tracks, .021, false);
   const rockGeometry = new T.DodecahedronGeometry(1, 0);
   const rockMaterial = new T.MeshStandardMaterial({ color: 0x9aa09e, roughness: .94, flatShading: true });
   for (const material of [treeMaterial, grassMaterial, shrubMaterial, rockMaterial]) register(material);
@@ -203,6 +248,7 @@ function cover(scene, register) {
       const rock = new T.InstancedMesh(rockGeometry, rockMaterial, 28);
       const centerX = (u + .5) * 64 - HALF, centerZ = (v + .5) * 64 - HALF;
       trees.castShadow = true;
+      trees.customDepthMaterial = treeDepth;
       trees.receiveShadow = true;
       grass.receiveShadow = true;
       shrubs.receiveShadow = true;
@@ -223,12 +269,10 @@ function cover(scene, register) {
   const object = new T.Object3D();
   const color = new T.Color();
   let lastMap;
-  const activeFire = [];
   return {
-    time, gust, tracks, activeFire,
+    time, gust, tracks,
     update(map) {
       lastMap = map;
-      activeFire.length = 0;
       for (const chunk of chunks) {
         const { trees, grass, rock, shrubs, candidates } = chunk;
         trees.count = grass.count = rock.count = shrubs.count = 0;
@@ -240,20 +284,19 @@ function cover(scene, register) {
           object.position.set(x, y, z);
           object.rotation.set(0, angle, 0);
           const canopy = map[at + 1], food = map[at + 2], wet = map[at + 3], burning = map[at + 4];
-          if (burning > .12 && index % 2 === 0) activeFire.push([x, y, z, density]);
           if (index < 130 && density < canopy * .84 && y > .35 && burning < .36) {
-            const h = .66 + 1.03 * scale;
+            const h = .57 + 1.19 * scale;
             object.scale.set(.76 + h * .24, h, .76 + h * .24);
             object.updateMatrix();
             trees.setMatrixAt(trees.count, object.matrix);
-            color.setHSL(.20 + wet * .056, .28, .55 + scale * .20);
+            color.setHSL(.17 + wet * .084 + density * .023, .18 + density * .18, .56 + scale * .27);
             trees.setColorAt(trees.count++, color);
           }
           if (density * .69 < food && burning < .25) {
             object.scale.set(1 + scale * .85, .47 + scale * .76, 1 + scale * .85);
             object.updateMatrix();
             grass.setMatrixAt(grass.count, object.matrix);
-            color.setHSL(.16 + wet * .10, .36 + food * .12, .29 + scale * .21);
+            color.setHSL(.17 + wet * .097, .39 + food * .16, .32 + scale * .30);
             grass.setColorAt(grass.count++, color);
           }
           if (index >= 128 && index < 172 && wet > .18 && density < canopy && burning < .25) {
@@ -293,7 +336,7 @@ function cover(scene, register) {
   };
 }
 
-function weatherParticles(scene) {
+function makeRain(scene) {
   const random = rng(38261);
   const flakes = Array.from({ length: 900 }, () => [random() * SIZE - HALF, random() * 80, random() * SIZE - HALF]);
   const rainData = new Float32Array(flakes.length * 6);
@@ -302,18 +345,8 @@ function weatherParticles(scene) {
   const rain = new T.LineSegments(rainGeom, new T.LineBasicMaterial({ color: 0xa5c5cc, transparent: true, opacity: .31, depthWrite: false }));
   rain.frustumCulled = false;
   scene.add(rain);
-  const fireData = new Float32Array(950 * 3);
-  const fireGeom = new T.BufferGeometry();
-  fireGeom.setAttribute('position', new T.BufferAttribute(fireData, 3).setUsage(T.DynamicDrawUsage));
-  const fire = new T.Points(fireGeom, new T.ShaderMaterial({
-    transparent: true, depthWrite: false, blending: T.AdditiveBlending,
-    vertexShader: 'void main(){ vec4 v=modelViewMatrix*vec4(position,1.); gl_Position=projectionMatrix*v; gl_PointSize=clamp(820./-v.z,3.,30.); }',
-    fragmentShader: 'void main(){ float d=length(gl_PointCoord-.5); gl_FragColor=vec4(3.6,1.04+d*.59,.065,1.-smoothstep(.04,.5,d)); }',
-  }));
-  fire.userData.bloom = true;
-  fire.frustumCulled = false;
-  scene.add(fire);
-  return function update(time, weather, active) {
+  rain.userData.skipAO = true;
+  return function update(time, weather) {
     rain.visible = weather === 'rain';
     if (rain.visible) {
       for (const [i, [x, phase, z]] of flakes.entries()) {
@@ -322,14 +355,7 @@ function weatherParticles(scene) {
       }
       rainGeom.attributes.position.needsUpdate = true;
     }
-    const count = Math.min(active.length * 4, 950);
-    for (let i = 0; i < count; i++) {
-      const [x, y, z, phase] = active[i >> 2];
-      const pulse = (time * (1.3 + phase) + phase + (i % 4) * .25) % 1;
-      fireData.set([x + Math.sin(i) * pulse, y + pulse * 4.6, z + Math.cos(i) * pulse], i * 3);
-    }
-    fireGeom.setDrawRange(0, count);
-    fireGeom.attributes.position.needsUpdate = true;
+
   };
 }
 
@@ -339,20 +365,28 @@ export function makeLand(scene, assets, register, onTextures) {
   const field = new T.DataTexture(bytes, GRID, GRID);
   const depth = new T.DataTexture(height, GRID, GRID);
   field.magFilter = field.minFilter = depth.magFilter = depth.minFilter = T.LinearFilter;
-  const terrain = makeTerrain(scene, field, assets, register, onTextures);
+  const scars = makeBurnScars();
+  const wildfire = new Wildfire(scene);
+  const terrain = makeTerrain(scene, field, scars.texture, assets, register, onTextures);
   const water = makeWater(scene, depth);
   const forest = cover(scene, register);
-  const particles = weatherParticles(scene);
-  const updateRidges = mountainRing(scene, register);
+  const rain = makeRain(scene);
+  const updateRidges = mountainRing(scene, terrain.material);
   return {
     mesh: terrain.mesh,
     sun: SUN,
     tracks: forest.tracks,
+    resetEffects() {
+      wildfire.reset();
+      scars.reset();
+    },
     setReflection(map) {
       water.reflectionMap.value = map;
       water.reflectionReady.value = 1;
     },
-    update(map) {
+    update(map, time) {
+      wildfire.setMap(map);
+      scars.update(map, time);
       for (let i = 0, j = 0; i < map.length; i += CHANNELS, j += 4) {
         bytes[j] = Math.round(map[i + 3] * 255);
         bytes[j + 1] = Math.round(map[i + 1] * 255);
@@ -376,7 +410,8 @@ export function makeLand(scene, assets, register, onTextures) {
       terrain.uniforms.rainfall.value = weather === 'rain' ? .90 : 0;
       forest.gust.value = weather === 'rain' ? 1.16 : weather === 'heat' ? .58 : .22;
       forest.lod(camera, profile);
-      particles(time, weather, forest.activeFire);
+      wildfire.tick(time, weather, night, camera, profile);
+      rain(time, weather);
     },
   };
 }

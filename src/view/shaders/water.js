@@ -21,22 +21,24 @@ void main() {
   float depth=(texture2D(waterDepth,p/320.+.5).r-.5)*20.;
   if(depth < -.10) discard;
   depth=max(0.,depth);
-  float a=dot(p,vec2(.86,.51)) + elapsed*1.31;
-  float b=dot(p,vec2(-.24,1.58)) - elapsed*1.1;
-  float c=dot(p,vec2(2.27,-3.18)) + elapsed*2.86;
-  float wind=1.+precipitation*.57;
-  vec3 normal=normalize(vec3(wind*(cos(a)*.038+cos(b)*.036+sin(c)*.015), 1.,
-    wind*(sin(a)*.035+sin(b)*.041+cos(c)*.017)));
+  vec2 along=normalize(vec2(.84,.53)), crosswind=normalize(vec2(-.36,.93));
+  float shear=waveNoise(p*.31+vec2(-elapsed*.25,elapsed*.16))-.5;
+  float a=dot(p,along)*1.10+elapsed*1.10+shear*.79;
+  float b=dot(p,crosswind)*1.70-elapsed*.82+shear*.46;
+  float c=dot(p,along*.62+crosswind*.71)*4.25+elapsed*2.76;
+  float wind=1.+precipitation*.46;
+  vec2 ripple=along*(cos(a)*.044+sin(c)*.012)+crosswind*(cos(b)*.039+cos(c)*.011);
+  vec3 normal=normalize(vec3(wind*ripple.x,1.,wind*ripple.y));
   vec3 viewDir=normalize(cameraPosition-worldPoint);
   vec3 reflected=reflect(-viewDir,normal);
   float cosView=max(dot(viewDir,normal),0.);
   float fresnel=.0204+.9796*pow(1.-cosView,5.);
-  float roughGlint=mix(171.,72.,precipitation);
-  float glint=pow(max(0.,dot(reflected,sunDirection)),roughGlint)*(1.-night)*1.36;
+  float solidAngle=max(0.,dot(reflected,sunDirection));
+  float glint=(pow(solidAngle,mix(290.,119.,precipitation))*1.27+pow(solidAngle,35.)*.081)*(1.-night*.97);
   vec3 env=waterSky*mix(.81,1.22,max(0.,reflected.y));
   if(reflectionReady>.5){
     vec3 hdr=texture2D(reflectionMap,environmentUV(normalize(reflected+vec3(0.,.14,0.)))).rgb;
-    env=mix(env, min(vec3(1.8),hdr)*(.59-night*.41),.36);
+    env=mix(env, min(vec3(1.5),hdr)*(.60-night*.41),.28);
   }
   float waterPath=depth/(.44+.56*cosView);
   vec3 transmittance=exp(-waterPath*vec3(.68,.28,.22));
@@ -44,11 +46,12 @@ void main() {
   vec3 deep=vec3(.024,.141,.138)*(1.-night*.66);
   vec3 water=mix(deep,shallow,transmittance);
   vec3 color=mix(water,env,fresnel)+glint*vec3(1.,.78,.47);
-  float edge=1.-smoothstep(.18,.86,depth);
-  float swash=waveNoise(p*1.16+vec2(elapsed*.39,-elapsed*.29));
-  float foam=edge*smoothstep(.60,.81,swash+.12*sin(a+b));
-  foam+=edge*.23*(1.-smoothstep(.04,.23,depth))*(.65+.35*sin(a-c));
-  color=mix(color,vec3(.69,.77,.68)*(1.-night*.63),clamp(foam,0.,.79));
+  float edge=1.-smoothstep(.13,.93,depth);
+  float swirl=waveNoise(p*.64+along*elapsed*.19)+.33*waveNoise(p*1.47-crosswind*elapsed*.13);
+  float surge=.10*sin(a*.48+b*.44);
+  float seam=exp(-pow((depth-.115-surge)*8.1,2.));
+  float foam=seam*smoothstep(.44,.83,swirl)*.67+edge*smoothstep(.73,1.09,swirl+surge)*.38;
+  color=mix(color,vec3(.69,.74,.65)*(1.-night*.72),clamp(foam,0.,.72));
   float distanceToEye=length(cameraPosition-worldPoint);
   float fog=1.-exp(-pow(distanceToEye*fogStrength,2.));
   color=mix(color,horizon,fog);

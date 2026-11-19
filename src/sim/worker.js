@@ -25,6 +25,9 @@ function send() {
     agents[at + 9] = a.coatTrait;
     agents[at + 10] = a.sizeTrait;
     agents[at + 11] = Math.min(1, Math.max(0, (a.attackCD - .40) * 3.2));
+    agents[at + 12] = a.fear;
+    agents[at + 13] = a.signal;
+    agents[at + 14] = a.action === 'Alimentándose' ? 1 : a.action === 'Bebiendo' ? .91 : 0;
   }
   const transfer = [buffer];
   const terrain = sim.edited ? sim.map.slice() : undefined;

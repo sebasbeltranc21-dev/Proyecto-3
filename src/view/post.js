@@ -18,7 +18,7 @@ const colorGrade = {
     uniform vec3 mood;
     uniform float saturation, contrast, lift;
     void main(){
-      vec3 col=texture2D(tDiffuse,vUv).rgb + texture2D(glow,vUv).rgb*.27;
+      vec3 col=texture2D(tDiffuse,vUv).rgb + texture2D(glow,vUv).rgb*.23;
       float luma=dot(col,vec3(.2126,.7152,.0722));
       col=mix(vec3(luma),col,saturation);
       col=max(vec3(0.),(col-.18)*contrast+.18);
@@ -35,14 +35,30 @@ const grading = {
   heat: [1.12, 1.001, .842, 1.04, 1.053, .003],
 };
 
+class OpaqueAO extends SSAOPass {
+  render(renderer, writeBuffer, readBuffer) {
+    const excluded = [];
+    this.scene.traverseVisible(object => {
+      if (!object.userData.skipAO) return;
+      excluded.push(object);
+      object.visible = false;
+    });
+    try {
+      super.render(renderer, writeBuffer, readBuffer);
+    } finally {
+      for (const object of excluded) object.visible = true;
+    }
+  }
+}
+
 export function makePost(renderer, scene, camera, skyUniforms) {
   const bloom = new EffectComposer(renderer);
   bloom.renderToScreen = false;
   bloom.addPass(new RenderPass(scene, camera, null, 0x000000, 1));
-  bloom.addPass(new UnrealBloomPass(new T.Vector2(1, 1), .44, .40, .89));
+  bloom.addPass(new UnrealBloomPass(new T.Vector2(1, 1), .38, .43, .89));
   const beauty = new EffectComposer(renderer);
   const render = new RenderPass(scene, camera);
-  const ao = new SSAOPass(scene, camera, 1, 1, 12);
+  const ao = new OpaqueAO(scene, camera, 1, 1, 12);
   ao.kernelRadius = 7;
   ao.minDistance = .0015;
   ao.maxDistance = .026;
