@@ -174,6 +174,7 @@ function start(world) {
     if (button.dataset.speed) setSpeed(Number(button.dataset.speed));
     if (button.dataset.weather && SKY_PRESETS[button.dataset.weather]) send({ type: 'weather', weather: button.dataset.weather });
   });
+  get('quality').value = world.quality;
   get('quality').addEventListener('change', event => world.setQuality(event.target.value));
   get('markers').addEventListener('change', event => setMarkers(event.target.checked));
   get('radius').addEventListener('input', event => { get('radius-value').textContent = event.target.value + ' m'; });
@@ -253,6 +254,7 @@ function boot() {
   }
   if (!world) {
     world = new CompatibilityWorld(viewport);
+    viewport.dataset.renderer = 'canvas2d';
     get('view-mode').hidden = false;
   }
   start(world);

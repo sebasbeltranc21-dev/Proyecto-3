@@ -77,7 +77,7 @@ export function shell() {
     <button class="panel show-inspector" id="show-inspector" type="button" data-cmd="show-inspector" title="Abrir inspector" aria-label="Abrir inspector" hidden>${icon('brain')}</button>
     <section class="panel settings" id="settings" aria-label="Ajustes" hidden>
       <h2>Ajustes</h2>
-      <label>Calidad gráfica <select id="quality"><option value="eco">Rendimiento</option><option value="balanced" selected>Equilibrada</option><option value="cinema">Cinemática</option></select></label>
+      <label>Calidad gráfica <select id="quality"><option value="eco">Bajo</option><option value="balanced" selected>Medio</option><option value="high">Alto</option><option value="cinema">Ultra</option></select></label>
       <label>Marcadores <input id="markers" type="checkbox" checked></label>
       <label>Hora del bioma <input id="day" type="range" min="0" max="23.9" value="8.5" step=".1"></label>
       <form id="seed-form"><label>Semilla <input id="seed" type="number" min="0" max="4294967295" required></label><button type="submit">Aplicar</button></form>

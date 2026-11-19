@@ -1,6 +1,7 @@
 import * as T from 'three';
 import { CAP, STRIDE } from '../sim/config.js';
 import { ground } from '../sim/terrain.js';
+import { AnimalModels } from './models.js';
 
 const unit = new T.IcosahedronGeometry(1, 1);
 const LEG = new T.BoxGeometry(1, 1, 1);
@@ -19,10 +20,11 @@ const parts = [
 ];
 
 export class Fauna {
-  constructor(scene) {
+  constructor(scene, assets, register, onModels) {
     this.records = new Map();
     this.test = new T.Vector3();
     if (!scene) return;
+    this.models = new AnimalModels(scene, assets, register, onModels);
     this.colors = [new T.Color(0xbfe98e), new T.Color(0xf0a266)];
     this.points = new T.InstancedMesh(
       new T.RingGeometry(.58, .85, 14).rotateX(-Math.PI / 2),
@@ -33,7 +35,9 @@ export class Fauna {
     this.points.frustumCulled = false;
     scene.add(this.points);
     this.meshes = parts.map(part => {
-      const mesh = new T.InstancedMesh(part.shape, new T.MeshStandardMaterial({ roughness: .89, flatShading: true }), CAP);
+      const material = new T.MeshStandardMaterial({ roughness: .89, flatShading: true });
+      register(material);
+      const mesh = new T.InstancedMesh(part.shape, material, CAP);
       mesh.count = 0;
       mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
       mesh.castShadow = true;
@@ -57,14 +61,19 @@ export class Fauna {
       const at = i * STRIDE;
       const id = items[at];
       const x = items[at + 2], z = items[at + 3], angle = items[at + 4];
-      const record = this.records.get(id) ?? { id, x, z, angle, species: items[at + 1], y: 0 };
-      Object.assign(record, { tx: x, tz: z, ta: angle, pace: items[at + 5], hidden: items[at + 6], live: true });
+      const record = this.records.get(id) ?? {
+        id, x, z, angle, species: items[at + 1], y: 0, stride: 0, crouch: 0, attack: 0, phase: id % 6,
+      };
+      Object.assign(record, {
+        tx: x, tz: z, ta: angle, pace: items[at + 5], hidden: items[at + 6], live: true,
+        gait: items[at + 8], coatTrait: items[at + 9], sizeTrait: items[at + 10], attacking: items[at + 11],
+      });
       this.records.set(id, record);
     }
     for (const [id, record] of this.records) if (!record.live) this.records.delete(id);
   }
 
-  tick(dt, time, map, tracked, markers, quality) {
+  tick(dt, time, map, tracked, markers, profile, camera) {
     if (!map) return;
     let row = 0;
     const blend = 1 - Math.exp(-dt * 13);
@@ -80,7 +89,7 @@ export class Fauna {
       const crouch = a.hidden ? .71 : 1;
       const step = Math.sin(time * (2.9 + a.pace * 1.8) + a.id) * Math.min(.68, a.pace * .15);
       const object = this.object;
-      for (const [index, part] of parts.entries()) {
+      if (!this.models.ready) for (const [index, part] of parts.entries()) {
         const mesh = this.meshes[index];
         const [x, y, z] = part.offset;
         object.position.set(a.x + (x * cos + z * sin) * size, a.y + y * size * crouch, a.z + (z * cos - x * sin) * size);
@@ -91,21 +100,24 @@ export class Fauna {
         mesh.setMatrixAt(row, object.matrix);
         this.color.setHex(part.tones[wolf]).multiplyScalar(.77 + .25 * (a.id % 31) / 30);
         mesh.setColorAt(row, this.color);
-        mesh.castShadow = quality !== 'eco';
+        mesh.castShadow = profile.shadows > 0;
       }
       object.position.set(a.x, a.y + .12, a.z);
       object.scale.setScalar(a.species ? 1.37 : 1.08);
       object.rotation.set(0, 0, 0);
       object.updateMatrix();
       this.points.setMatrixAt(row, object.matrix);
-      this.points.setColorAt(row, this.colors[a.species].clone().multiplyScalar(a.hidden ? .56 : 1));
+      this.points.setColorAt(row, this.color.copy(this.colors[a.species]).multiplyScalar(a.hidden ? .56 : 1));
       if (a.id === tracked) {
         this.selection.position.set(a.x, a.y + .20, a.z);
         this.selection.scale.setScalar(1 + .08 * Math.sin(time * 4));
       }
       row++;
     }
+    this.models.draw(this.records.values(), camera, dt, time, profile, tracked);
     for (const mesh of this.meshes) {
+      mesh.visible = !this.models.ready;
+      if (!mesh.visible) continue;
       mesh.count = row;
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

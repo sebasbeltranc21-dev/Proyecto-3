@@ -76,7 +76,11 @@ export class Ecosystem {
     const variation = inherited
       ? NeuralNetwork.breed(inherited.brain.genes, mate?.brain.genes ?? inherited.brain.genes, random)
       : { brain: NeuralNetwork.founder(species, random), mutations: 0 };
+    const genes = variation.brain.genes;
+    const coatTrait = Math.tanh(genes[23] * .86 + genes[55] * .73 + genes[324] * .54 - genes[411] * .72);
+    const sizeTrait = Math.tanh(genes[26] * .71 + genes[103] * .65 - genes[340] * .51 + genes[477] * .6);
     const a = {
+      coatTrait, sizeTrait, gait: 0,
       id: this.nextId++, species, x, z, angle: parent?.angle ?? random() * Math.PI * 2,
       hunger: .14 + random() * .25, thirst: .10 + random() * .2,
       energy: .88, health: 1, fear: 0, age: parent || archived ? 0 : random() * 22,
@@ -218,6 +222,7 @@ export class Ecosystem {
     const { ally, allyD, victim } = this.sense(a, visibility, temperature);
     const [throttle, turn, gait, signal, interact, breed] = a.brain.run(a.inputs);
     const species = SPECIES[a.species];
+    a.gait = gait;
     const oldTerrain = a.terrainCell;
     a.age += DT;
     a.cooldown -= DT;

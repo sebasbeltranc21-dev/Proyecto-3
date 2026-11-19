@@ -10,7 +10,9 @@
     "dev": "vite --host 0.0.0.0",
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --test"
+    "test": "node --test",
+    "predev": "node scripts/prepare-codecs.mjs",
+    "prebuild": "node scripts/prepare-codecs.mjs"
   },
   "dependencies": {
     "three": "0.183.2"

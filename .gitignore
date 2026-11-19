@@ -11,3 +11,4 @@ dist/
 assets/source/
 *.log
 .DS_Store
+public/codecs/

@@ -21,6 +21,10 @@ function send() {
     agents[at + 5] = a.speed;
     agents[at + 6] = Number(a.hidden);
     agents[at + 7] = a.generation;
+    agents[at + 8] = a.gait;
+    agents[at + 9] = a.coatTrait;
+    agents[at + 10] = a.sizeTrait;
+    agents[at + 11] = Math.min(1, Math.max(0, (a.attackCD - .40) * 3.2));
   }
   const transfer = [buffer];
   const terrain = sim.edited ? sim.map.slice() : undefined;

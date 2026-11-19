@@ -6,6 +6,8 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id) {
+          if (id.includes('/three/examples/jsm/postprocessing/') || id.includes('/three/examples/jsm/shaders/')) return;
+          if (id.includes('/three/examples/')) return 'three-addons';
           if (id.includes('/node_modules/three/')) return 'three';
         },
       },

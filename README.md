@@ -2,6 +2,8 @@
 
 Simulador 3D de neuroevolución. Presas y depredadores perciben el entorno, actúan con redes neuronales individuales y transmiten sus pesos a nuevas generaciones. El jugador modifica la cuenca en tiempo real y puede inspeccionar las activaciones, el linaje, la aptitud y las mutaciones de una criatura.
 
+**Fase 2**. La versión actual incorpora fauna esculpida con GLB Draco y Meshopt, biomas PBR KTX2, vegetación reactiva y perfiles Bajo a Ultra. Consulta el [pipeline visual y guía de recursos](docs/fase-2.md).
+
 ## Desarrollo
 
 Requiere Node.js 22.12 o posterior y un navegador. WebGL 2 habilita el pipeline gráfico completo. La vista de compatibilidad proyecta la cuenca en Canvas 2D y conserva el worker, los pinceles, el clima y el inspector.
@@ -58,18 +60,7 @@ La aptitud valora edad, capturas, asistencias, refugios, desplazamientos a recur
 
 ## Pipeline gráfico y rendimiento
 
-| Sistema | Configuración implementada |
-| --- | --- |
-| Cámara | Perspectiva de 46°, planos 0,64–1180 m, órbita amortiguada y seguimiento opcional |
-| Iluminación | Hemisférica y direccional con sombras PCF de 1536², ciclo día/noche, exposición e intensidad según clima |
-| Terreno | Cuenca de 320 × 320 m, cuadrícula ecológica de 4 m, malla de 120 × 120 segmentos, materiales estándar PBR, mezcla de humedad/cobertura/nutrientes/ceniza y detalle triplanar procedural con mipmaps |
-| Atmósfera | Cielo procedural, nubes, niebla exponencial, cordilleras, lluvia y partículas de fuego |
-| Agua | Ondas procedurales, Fresnel y reflejo aproximado de cielo y sol; los canales bajo la cota global de agua se inundan |
-| Vegetación | Instancias en 25 bloques, dos LOD de coníferas, descarte por frustum y distancia, viento en vértices |
-| Imagen | S-RGB, ACES Filmic y bloom tenue en modo Cinemática; resolución limitada por perfil |
-| Presupuesto | Objetivo de 60 FPS = 16,7 ms por frame, pendiente de medir en el hardware objetivo |
-
-El acabado de esta versión usa geometría y texturas procedurales. El agua usa una cota global y la niebla es exponencial. El viento mueve la vegetación. La interacción localizada de fauna con pasto, los reflejos de escena, la simulación de caudal, el HDRI, la niebla volumétrica, SSAO, DOF y el color grading avanzado quedan en la hoja de ruta.
+El [pipeline visual de la Fase 2](docs/fase-2.md) documenta materiales, shaders, perfiles, compresión, licencias y reproducción del pipeline. La cámara usa perspectiva de 46°, planos 0,64–1180 m y órbita amortiguada. «Seguir criatura» acerca la cámara para ver la animación y el pelaje. El objetivo de 60 FPS se verifica por dispositivo.
 
 ## GitHub y Vercel
 
@@ -78,7 +69,7 @@ El acabado de esta versión usa geometría y texturas procedurales. El agua usa 
 3. Establece `main` como rama de producción. Trabaja en `dev` o en ramas derivadas para generar despliegues de vista previa y abre PRs hacia `main` para revisar la vista previa antes de integrar.
 4. Para verificar la publicación, revisa el estado del despliegue y abre su dominio. Comprueba el lienzo 3D, el inspector y una acción de edición en el navegador.
 
-Vercel negocia compresión en su CDN. `vercel.json` define la política de caché de los archivos versionados por Vite. El worker usa el mismo origen y buffers transferibles, por lo que no requiere CORS ni COOP/COEP. Si se adopta `SharedArrayBuffer`, configurar `Cross-Origin-Opener-Policy: same-origin` y `Cross-Origin-Embedder-Policy: require-corp` y revisar CORS/CORP para los recursos externos. La versión actual usa recursos procedurales y carece de binarios pesados. Si se incorporan archivos fuente grandes, registrar en Git LFS solo los tipos que lo necesiten y habilitar LFS para el proyecto en Vercel antes del build.
+Vercel negocia compresión en su CDN. `vercel.json` define la política de caché de los archivos versionados por Vite. El worker usa el mismo origen y buffers transferibles, por lo que no requiere CORS ni COOP/COEP. Si se adopta `SharedArrayBuffer`, configurar `Cross-Origin-Opener-Policy: same-origin` y `Cross-Origin-Embedder-Policy: require-corp` y revisar CORS/CORP para los recursos externos. La versión actual usa GLB y KTX2 optimizados y no necesita archivos fuente pesados en el checkout. Si se incorporan archivos fuente grandes, registrar en Git LFS solo los tipos que lo necesiten y habilitar LFS para el proyecto en Vercel antes del build.
 
 ## Hoja de ruta
 
@@ -86,8 +77,8 @@ Vercel negocia compresión en su CDN. `vercel.json` define la política de cach�
 | --- | --- |
 | MVP | Bioma editable, evolución, HUD y build estático. Verificar una partida completa y el enlace de producción. |
 | Validación ecológica | Ejecutar varias decenas de semillas por clima; contrastar fundadores con generaciones posteriores y medir población, fitness y conducta frente a una población con pesos congelados. Ajustar el mínimo de reserva y documentar cuándo hay extinciones. |
-| Arte de producción | Integrar criaturas GLB animadas, photogrammetry con LOD, albedo/normales/rugosidad KTX2 y un entorno HDRI comprimido. Incorporar respuesta localizada del pasto y mezcla de materiales por bioma. |
-| Atmósfera y agua | Implementar reflejos planares de resolución reducida, volúmenes con marcha de rayos y resolución adaptativa, SSAO, DOF y corrección de color con LUT en calidad Cinemática. |
+| Fase 2 visual | Fauna GLB con animación por vértices, LOD y genética visual, KTX2, HDRI, CSM y pasto reactivo. [Guía de implementación](docs/fase-2.md). |
+| Arte y atmósfera avanzados | Refinar la fauna con mapas de pelaje, implementar reflejos planares de resolución reducida, volúmenes con marcha de rayos y profundidad de campo si el presupuesto de GPU lo permite. |
 | Optimización | Perfilar CPU y GPU en escritorio y tablet, medir tiempo de frame p95 con 240 criaturas, ajustar sombras y resolución dinámica. Separar presupuestos de GPU y worker antes de migrar kernels a WASM o WebGPU. |
 
 Referencias de plataforma: [Three.js WebGLRenderer](https://threejs.org/docs/pages/WebGLRenderer.html), [Vercel para GitHub](https://vercel.com/docs/git/vercel-for-github), [Vercel CDN](https://vercel.com/docs/how-vercel-cdn-works).
