@@ -40,7 +40,7 @@ void main(){
     vFire=vec3(seed,power,age);
   #else
     float twitch=.87+.13*sin(clock*7.9+seed*11.)+.07*sin(clock*14.7+seed*17.);
-    float skew=sin(clock*2.4+seed*8.)*.30+wind*.79;
+    float skew=sin(clock*2.4+seed*8.)*.29+wind*(.49+fract(seed*.71)*.27);
     local=vec3(position.x*width+uv.y*uv.y*skew*width,0.,0.)+up*uv.y*height*twitch;
     vFire=vec3(seed,power,twitch);
   #endif
@@ -65,20 +65,23 @@ void main(){
   float coarse=fbm(p);
   float filament=fbm(p*vec2(1.20,1.70)+vec2(coarse*.72,-clock*.29));
   float center=abs(vUV.x-.5+(coarse*.38+filament*.115)*(.21+y));
-  float taper=.46*pow(max(0.,1.-y),.57);
-  float tongue=taper-center+coarse*(.21+y*.41)+filament*.12;
-  float tip=y+coarse*.44+filament*.16;
-  float shape=smoothstep(-.035,.15,tongue)*(1.-smoothstep(.72,1.045,tip));
-  float base=smoothstep(0.,.065,y);
-  float rim=smoothstep(0.,.115,vUV.x)*smoothstep(0.,.115,1.-vUV.x);
-  float opacity=shape*rim*base*mix(.52,.92,vFire.y);
+  float taper=.385*pow(max(0.,1.-y),.63);
+  float tongue=taper-center+coarse*(.18+y*.47)+filament*.18;
+  float tip=y+coarse*.47+filament*.27;
+  float shape=smoothstep(-.043,.128,tongue)*(1.-smoothstep(.67,1.004,tip));
+  float baseHeight=.034+fbm(vec2(vUV.x*8.1+seed,clock*.91))*.13+center*.15;
+  float base=smoothstep(-.028,.158,y-baseHeight);
+  float rim=smoothstep(0.,.125,vUV.x)*smoothstep(0.,.125,1.-vUV.x);
+  float opacity=shape*rim*base*mix(.47,.81,vFire.y);
   if(opacity<.012) discard;
-  float warmth=clamp(.25+tongue*1.83-y*.46+filament*.38,0.,1.);
-  vec3 color=mix(vec3(.28,.008,.001),vec3(1.75,.106,.008),smoothstep(.10,.48,warmth));
-  color=mix(color,vec3(4.3,1.22,.065),smoothstep(.42,.74,warmth));
-  color=mix(color,vec3(5.0,4.2,2.35),smoothstep(.73,1.,warmth)*(1.-y*.68));
+  float warmth=clamp(.16+tongue*1.85-y*.42+filament*.42,0.,1.);
+  vec3 color=mix(vec3(.31,.005,.001),vec3(2.26,.158,.009),smoothstep(.04,.55,warmth));
+  color=mix(color,vec3(3.8,1.21,.055),smoothstep(.38,.83,warmth));
+  float hot=exp(-pow(center/max(.047,.11-y*.10),2.))*pow(max(0.,1.-y),2.55);
+  hot*=smoothstep(-.21,.24,coarse+filament*.66+.105);
+  color=mix(color,vec3(5.08,4.05,2.02),hot*.89);
   float fog=exp(-pow(vDepth*fogDensity,2.));
-  gl_FragColor=vec4(color*(.76+.46*vFire.y),opacity*fog);
+  gl_FragColor=vec4(color*(.56+.32*vFire.y),opacity*fog);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }
@@ -99,9 +102,9 @@ void main(){
   float outline=1.-smoothstep(.24,.985,length(circle)+textureCloud*.42);
   float pockets=smoothstep(-.29,.16,textureCloud);
   float life=smoothstep(0.,.125,age)*(1.-smoothstep(.43,1.,age));
-  float opacity=outline*pockets*life*(.28+.23*vFire.y);
+  float opacity=outline*pockets*life*(.40+.31*vFire.y);
   if(opacity<.012) discard;
-  vec3 soot=mix(vec3(.032,.022,.021),vec3(.157,.152,.149),age+textureCloud*.16);
+  vec3 soot=mix(vec3(.021,.017,.015),vec3(.125,.122,.116),age+textureCloud*.16);
   soot+=vec3(.092,.023,.003)*max(0.,.54-age)*vFire.y;
   float fog=1.-exp(-pow(vDepth*fogDensity,2.));
   gl_FragColor=vec4(mix(soot,fogTint,fog*.78),opacity*(1.-fog*.43));
