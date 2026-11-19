@@ -4,9 +4,10 @@ import { NeuralNetwork, NI, NO } from '../sim/neural.js';
 import { tile } from '../sim/terrain.js';
 
 export const SECONDS = 16;
-export const FPS = 10;
+export const FPS = 1 / DT;
 export const IDS = [1, 2, 3, 4, 5, 6];
-export const ROW = 6 + NI + NO;
+export const MOTION = 6 + NI + NO;
+export const ROW = MOTION + 7;
 export const SENSORS = {
   none: { label: 'Red completa', inputs: [] },
   signal: { label: 'Señal de aliados', inputs: [27] },
@@ -76,8 +77,8 @@ export function playEpisode(arena, genomes, { record = false, disabled = 'none',
       for (const deer of prey) if (deer.health > 0) distance = Math.min(distance, Math.hypot(wolf.x - deer.x, wolf.z - deer.z));
       pressure += Math.max(0, 20 - distance) * DT;
     }
-    if (!frames || tick % 2) continue;
-    const at = tick / 2 * ROW * actors.length;
+    if (!frames) continue;
+    const at = tick * ROW * actors.length;
     for (const [i, agent] of actors.entries()) {
       const offset = at + i * ROW;
       const flags = Number(agent.hidden) | (Number(agent.signal > 0) << 1) | (Number(world.time - agent.huntStarted < .47) << 2) |
@@ -85,6 +86,8 @@ export function playEpisode(arena, genomes, { record = false, disabled = 'none',
       frames.set([agent.x, agent.z, agent.angle, agent.health, flags, agent.speed], offset);
       frames.set(agent.inputs, offset + 6);
       frames.set(agent.brain.outputs, offset + 6 + NI);
+      frames.set([agent.huntStarted, agent.biteAt, agent.hitAt, agent.fallAt, agent.fear, agent.signal,
+        agent.drinking ? .91 : Number(agent.action === 'Alimentándose')], offset + MOTION);
     }
   }
   for (const contact of world.contacts) if (contact.captured) captures.push(contact);

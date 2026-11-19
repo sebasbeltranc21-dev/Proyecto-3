@@ -100,7 +100,7 @@ export class Tactics {
         c.lineWidth = id === focus ? 1.65 : 1.05;
         c.strokeStyle = color + (id === focus ? 'a8' : '65');
         c.beginPath();
-        for (let f = Math.max(0, frame - 30); f <= frame; f += 2) {
+        for (let f = Math.max(0, frame - FPS * 3); f <= frame; f += 4) {
           const offset = XY(f, id);
           if (data[offset + 3] <= 0) break;
           const [tx, ty] = this.project(data[offset], data[offset + 1]);

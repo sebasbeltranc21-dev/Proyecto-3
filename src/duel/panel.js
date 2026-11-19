@@ -2,7 +2,7 @@ import './panel.css';
 import { OUTPUTS, clamp } from '../sim/config.js';
 import { NI } from '../sim/neural.js';
 import { ARENAS } from './arena.js';
-import { IDS, SECONDS, SENSORS } from './episode.js';
+import { FPS, IDS, SECONDS, SENSORS } from './episode.js';
 import { Tactics, readAnimal } from './tactics.js';
 
 const options = (items) => items.map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
@@ -31,16 +31,31 @@ function layout() {
       </div>
       <p class="duel-note" data-duel="note"></p>
     </div>
+    <div class="duel-view-controls">
+      <div class="duel-tabs" role="group" aria-label="Vista del duelo">
+        <button type="button" data-duel="view-3d" aria-pressed="true">Mapa 3D</button>
+        <button type="button" data-duel="view-2d" aria-pressed="false">Vista táctica</button>
+      </div>
+      <div data-duel="camera-controls" class="duel-camera">
+        <label>Cámara <select data-duel="camera"><option value="follow">Seguir criatura</option><option value="overview">Vista general</option></select></label>
+        <button type="button" data-duel="zoom-in" aria-label="Acercar ambas cámaras" title="Acercar">+</button>
+        <button type="button" data-duel="zoom-out" aria-label="Alejar ambas cámaras" title="Alejar">−</button>
+      </div>
+      <p class="duel-note duel-render-note" data-duel="render-note" role="status">Cargando los mapas 3D…</p>
+    </div>
     <div class="duel-worlds">
+      <canvas class="duel-stage" data-duel="stage" aria-hidden="true"></canvas>
       ${['left', 'right'].map((side, index) => `<article class="duel-world">
         <header><span class="duel-letter">${index ? 'B' : 'A'}</span><h2 data-duel="${side}-title">Cargando…</h2></header>
-        <canvas data-duel="${side}-map" aria-label="Vista táctica ${index ? 'B' : 'A'}"></canvas>
+        <div class="duel-pane" data-duel="${side}-pane" aria-label="Escenario ${index ? 'B' : 'A'}">
+          <canvas data-duel="${side}-map" aria-label="Vista táctica ${index ? 'B' : 'A'}" hidden></canvas>
+        </div>
         <div data-duel="${side}-metrics" class="duel-metrics"></div>
       </article>`).join('')}
     </div>
     <div class="duel-playback">
       <button type="button" data-duel="play">Reproducir</button>
-      <input data-duel="time" type="range" min="0" max="${SECONDS}" value="0" step=".1" aria-label="Tiempo de la repetición">
+      <input data-duel="time" type="range" min="0" max="${SECONDS}" value="0" step="${1 / FPS}" aria-label="Tiempo de la repetición">
       <output data-duel="clock">0,0 / ${SECONDS} s</output>
     </div>
     <div class="duel-legend">
@@ -81,11 +96,42 @@ export function createDuel(onClose) {
   let total = 0, history, example, current, match, jumpToCapture = false;
   let running = true, time = 0, prior = 0, raf = 0, request = 0, inspection = '';
   let ablation = false;
+  let stage, stageRequest, stageState = 'loading', view = '3d';
   focus.value = '5';
-  const maps = ['left', 'right'].map(side => new Tactics(get(side + '-map'), id => {
+  const sides = ['left', 'right'];
+  const select = id => {
     focus.value = id;
     if (ablation) compare(true);
-  }));
+  };
+  const maps = sides.map(side => new Tactics(get(side + '-map'), select));
+
+  function setView(next) {
+    view = next;
+    dialog.dataset.view = next;
+    get('stage').hidden = next !== '3d';
+    get('camera-controls').hidden = next !== '3d';
+    get('view-3d').setAttribute('aria-pressed', next === '3d');
+    get('view-2d').setAttribute('aria-pressed', next === '2d');
+    get('render-note').textContent = stageState === 'unavailable' ? 'Vista táctica activa. Los mapas 3D no pudieron cargarse.'
+      : next === '2d' ? '' : stageState === 'ready' ? 'Arrastra para girar ambas cámaras.' : 'Cargando los mapas 3D…';
+    for (const side of sides) get(side + '-map').hidden = next !== '2d';
+    if (next === '3d') stage?.resize();
+    else maps.forEach(map => map.resize());
+    inspection = '';
+  }
+
+  function loadStage() {
+    if (stageRequest) return;
+    function onReady(ready) {
+      stageState = ready ? 'ready' : 'unavailable';
+      dialog.dataset.renderer = ready ? 'webgl2' : 'canvas2d';
+      get('view-3d').disabled = !ready;
+      setView(ready ? view : '2d');
+    }
+    stageRequest = import('./stage3d.js').then(({ DuelStage }) => {
+      stage = new DuelStage(get('stage'), sides.map(side => get(side + '-pane')), select, onReady);
+    }).catch(() => onReady(false));
+  }
 
   function togglePlay(next) {
     running = next;
@@ -112,6 +158,7 @@ export function createDuel(onClose) {
       : config.mode === 'both' ? 'Mismo mapa y posiciones iniciales. Evolucionan lobos y presas.'
         : `Mismo mapa y posiciones iniciales. ${config.mode === 'wolves' ? 'Las presas' : 'Los lobos'} usan G1 en ambos lados.`;
     get('sensor-value').hidden = !ablation;
+    get('sensor-value').textContent = '';
     match = null;
     for (const side of ['left', 'right']) get(side + '-metrics').replaceChildren();
     get('moments').hidden = true;
@@ -233,13 +280,18 @@ export function createDuel(onClose) {
     raf = requestAnimationFrame(frame);
     const dt = Math.min((now - (prior || now)) / 1000, .1);
     prior = now;
-    if (!match) return;
+    if (!match || (view === '3d' && stageState !== 'ready')) return;
     if (running) time = Math.min(SECONDS, time + dt);
     if (time === SECONDS && running) togglePlay(false);
     const selected = Number(focus.value);
-    maps[0].draw(match.left, time, selected);
-    maps[1].draw(match.right, time, selected);
-    const row = Math.floor(time * 10);
+    if (view === '3d') {
+      stage.setMatch(match, ARENAS[current.arena].seed);
+      stage.draw(time, selected, get('camera').value);
+    } else {
+      maps[0].draw(match.left, time, selected);
+      maps[1].draw(match.right, time, selected);
+    }
+    const row = Math.floor(time * FPS + 1e-6);
     const key = match.id + '/' + row + '/' + selected;
     if (key === inspection) return;
     inspection = key;
@@ -273,6 +325,10 @@ export function createDuel(onClose) {
   }
 
   get('close').addEventListener('click', () => dialog.close());
+  get('view-3d').addEventListener('click', () => setView('3d'));
+  get('view-2d').addEventListener('click', () => setView('2d'));
+  get('zoom-in').addEventListener('click', () => stage?.zoomBy(.83));
+  get('zoom-out').addEventListener('click', () => stage?.zoomBy(1 / .83));
   get('compare').addEventListener('click', () => { if (ablation) setMode(false); });
   get('ablation').addEventListener('click', () => { if (!ablation) setMode(true); });
   get('pack').addEventListener('click', () => {
@@ -298,5 +354,13 @@ export function createDuel(onClose) {
     togglePlay(false);
   });
   dialog.addEventListener('close', () => { cancelAnimationFrame(raf); prior = 0; onClose(); });
-  return { open() { dialog.showModal(); togglePlay(true); raf = requestAnimationFrame(frame); } };
+  return {
+    open() {
+      dialog.showModal();
+      setView(view);
+      loadStage();
+      togglePlay(time < SECONDS);
+      raf = requestAnimationFrame(frame);
+    },
+  };
 }

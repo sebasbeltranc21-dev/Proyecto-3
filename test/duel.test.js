@@ -5,6 +5,7 @@ import { ARENAS, makeArena } from '../src/duel/arena.js';
 import { FPS, IDS, ROW, SECONDS, playEpisode } from '../src/duel/episode.js';
 import { GENES, NI } from '../src/sim/neural.js';
 import { readAnimal } from '../src/duel/tactics.js';
+import { ReplayMotion } from '../src/duel/replay-motion.js';
 
 const { generations } = JSON.parse(await readFile(new URL('../src/duel/checkpoints.json', import.meta.url)));
 const materialize = index => generations[index].genes.map(bytes =>
@@ -35,4 +36,20 @@ test('replays are deterministic and isolate sensor ablation to the selected netw
   assert.ok(readAnimal(control, .1, 5)[12] > 0);
   assert.deepEqual(Array.from(readAnimal(blinded, .1, 5).subarray(12, 15)), [0, 0, 0]);
   assert.notDeepEqual(readAnimal(control, .1, 5).slice(6 + NI), readAnimal(blinded, .1, 5).slice(6 + NI));
+});
+
+test('3D motion seeks to the recorded simulation tick and reconstructs the same pose after rewinding', () => {
+  const arena = makeArena(ARENAS[0].seed);
+  const result = playEpisode(arena, materialize(0), { record: true });
+  const motion = new ReplayMotion(result, arena.map);
+  const at = 4.15;
+  const capture = result.contacts.find(contact => contact.captured);
+  assert.ok(capture);
+  const before = structuredClone(motion.sample(at));
+  const row = readAnimal(result, at, 5);
+  assert.equal(before[4].x, row[0]);
+  assert.equal(before[4].z, row[1]);
+  const after = motion.sample(capture.time + .75)[capture.prey - 1];
+  assert.ok(after.visible && after.health <= 0 && after.pose.down > .7);
+  assert.deepEqual(motion.sample(at), before);
 });

@@ -113,7 +113,7 @@ function tint(geometry, value, variation = .15) {
   return part;
 }
 
-function pine(detail) {
+export function pine(detail) {
   const bark = tint(new T.CylinderGeometry(.04, .24, 5.98, detail ? 8 : 5).translate(0, 2.99, 0),
     0x6c523d, .22);
   bark.deleteAttribute('uv');
@@ -179,7 +179,7 @@ function pine(detail) {
   return geometry;
 }
 
-function grassGeometry() {
+export function grassGeometry() {
   const positions = [], colors = [], random = rng(3191);
   for (let i = 0; i < 6; i++) {
     const h = .36 + random() * .60, angle = random() * Math.PI * 2;
@@ -216,7 +216,7 @@ function shrubGeometry() {
   return result;
 }
 
-function smoothRock() {
+export function smoothRock() {
   const raw = new T.IcosahedronGeometry(1, 2);
   raw.deleteAttribute('normal');
   raw.deleteAttribute('uv');
