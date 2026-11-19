@@ -1,9 +1,10 @@
 import * as T from 'three';
-import { CAP, STRIDE } from '../sim/config.js';
+import { SCENE_CAP, STRIDE } from '../sim/config.js';
 import { ground } from '../sim/terrain.js';
 import { WADE_HEIGHT, onWaterSurface } from '../sim/river-navigation.js';
 import { AnimalModels } from './models.js';
 import { newLocomotion } from './locomotion.js';
+import { CollisionIndex } from '../sim/collisions.js';
 
 const unit = new T.IcosahedronGeometry(1, 1);
 const LEG = new T.BoxGeometry(1, 1, 1);
@@ -25,13 +26,14 @@ export class Fauna {
   constructor(scene, assets, register, onModels) {
     this.records = new Map();
     this.test = new T.Vector3();
+    this.collisions = new CollisionIndex();
     if (!scene) return;
     this.models = new AnimalModels(scene, assets, register, onModels);
     this.colors = [new T.Color(0xbfe98e), new T.Color(0xf0a266)];
     this.points = new T.InstancedMesh(
       new T.RingGeometry(.58, .85, 14).rotateX(-Math.PI / 2),
       new T.MeshBasicMaterial({ transparent: true, opacity: .72, depthWrite: false, toneMapped: false }),
-      CAP,
+      SCENE_CAP,
     );
     this.points.count = 0;
     this.points.frustumCulled = false;
@@ -39,7 +41,7 @@ export class Fauna {
     this.meshes = parts.map(part => {
       const material = new T.MeshStandardMaterial({ roughness: .89 });
       register(material);
-      const mesh = new T.InstancedMesh(part.shape, material, CAP);
+      const mesh = new T.InstancedMesh(part.shape, material, SCENE_CAP);
       mesh.count = 0;
       mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
       mesh.castShadow = true;
@@ -71,29 +73,67 @@ export class Fauna {
         gait: items[at + 8], coatTrait: items[at + 9], sizeTrait: items[at + 10], attacking: items[at + 11],
         fear: items[at + 12], signaling: items[at + 13], feeding: items[at + 14],
         targetSwimming: Boolean(items[at + 15]),
+        huntAge: items[at + 16], hurtAge: items[at + 17], fallAge: items[at + 18], huntStarted: items[at + 19],
       });
       this.records.set(id, record);
     }
     for (const [id, record] of this.records) if (!record.live) this.records.delete(id);
   }
 
-  tick(dt, time, map, tracked, markers, profile, camera) {
-    if (!map) return;
-    let row = 0;
+  setMap(map, groups) {
+    this.collisions.setMap(map, groups);
+  }
+
+  advance(dt, map) {
     const blend = 1 - Math.exp(-dt * 13);
-    this.selection.visible = this.records.has(tracked);
+    const { collisions } = this;
+    collisions.rebuild(this.records.values());
+    let blocked = false;
     for (const a of this.records.values()) {
-      const dx = (a.tx - a.x) * blend, dz = (a.tz - a.z) * blend;
-      a.x += dx;
-      a.z += dz;
-      a.distance = Math.hypot(dx, dz);
+      a.previousX = a.x;
+      a.previousZ = a.z;
+      a.previousAngle = a.angle;
+      if (blocked) continue;
+      const x = a.x + (a.tx - a.x) * blend, z = a.z + (a.tz - a.z) * blend;
+      const delta = a.ta - a.angle;
+      const angle = a.angle + Math.atan2(Math.sin(delta), Math.cos(delta)) * blend;
+      a.swimming = a.targetSwimming || ground(map, a.x, a.z) < WADE_HEIGHT;
+      if (collisions.canMove(a, x, z, angle)) {
+        a.x = x;
+        a.z = z;
+        a.angle = angle;
+      } else if (collisions.canPlace(a, a.tx, a.tz, a.ta)) {
+        a.x = a.tx;
+        a.z = a.tz;
+        a.angle = a.ta;
+      } else if (!collisions.canPlace(a, a.x, a.z, a.angle) || Math.hypot(a.tx - a.x, a.tz - a.z) > 3.4) {
+        blocked = true;
+      }
+      collisions.move(a);
+    }
+    // Re-anchor both sides of a conflict to the same authoritative snapshot.
+    for (const a of this.records.values()) {
+      if (blocked) {
+        a.x = a.tx;
+        a.z = a.tz;
+        a.angle = a.ta;
+      }
       const height = ground(map, a.x, a.z);
       a.swimming = a.targetSwimming || height < WADE_HEIGHT;
       a.y = onWaterSurface(height, a.swimming);
-      const delta = a.ta - a.angle;
-      const yaw = Math.atan2(Math.sin(delta), Math.cos(delta)) * blend;
-      a.angle += yaw;
-      a.turnRate = yaw / Math.max(dt, .001);
+      a.distance = Math.min(Math.hypot(a.x - a.previousX, a.z - a.previousZ), dt * 11.5);
+      const delta = a.angle - a.previousAngle;
+      a.turnRate = Math.atan2(Math.sin(delta), Math.cos(delta)) / Math.max(dt, .001);
+    }
+  }
+
+  tick(dt, time, map, tracked, markers, profile, camera) {
+    if (!map) return;
+    this.advance(dt, map);
+    let row = 0;
+    let marks = 0;
+    this.selection.visible = this.records.has(tracked);
+    for (const a of this.records.values()) {
       const sin = Math.sin(a.angle), cos = Math.cos(a.angle);
       const size = a.species ? 1.16 : 1.24;
       const crouch = a.hidden && !a.swimming ? .71 : 1;
@@ -112,12 +152,14 @@ export class Fauna {
         mesh.setColorAt(row, this.color);
         mesh.castShadow = profile.shadows > 0;
       }
-      object.position.set(a.x, a.y + .12, a.z);
-      object.scale.setScalar(a.species ? 1.37 : 1.08);
-      object.rotation.set(0, 0, 0);
-      object.updateMatrix();
-      this.points.setMatrixAt(row, object.matrix);
-      this.points.setColorAt(row, this.color.copy(this.colors[a.species]).multiplyScalar(a.hidden ? .56 : 1));
+      if (a.fallAge < 0) {
+        object.position.set(a.x, a.y + .12, a.z);
+        object.scale.setScalar(a.species ? 1.37 : 1.08);
+        object.rotation.set(0, 0, 0);
+        object.updateMatrix();
+        this.points.setMatrixAt(marks, object.matrix);
+        this.points.setColorAt(marks++, this.color.copy(this.colors[a.species]).multiplyScalar(a.hidden ? .56 : 1));
+      }
       if (a.id === tracked) {
         this.selection.position.set(a.x, a.y + .20, a.z);
         this.selection.scale.setScalar(1 + .08 * Math.sin(time * 4));
@@ -132,7 +174,7 @@ export class Fauna {
       mesh.instanceMatrix.needsUpdate = true;
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
-    this.points.count = row;
+    this.points.count = marks;
     this.points.visible = markers;
     this.points.instanceMatrix.needsUpdate = true;
     if (this.points.instanceColor) this.points.instanceColor.needsUpdate = true;
@@ -154,7 +196,7 @@ export class Fauna {
   nearest(target, species) {
     let candidate, best = Infinity;
     for (const a of this.records.values()) {
-      if (species !== undefined && a.species !== species) continue;
+      if (a.fallAge >= 0 || species !== undefined && a.species !== species) continue;
       const score = (a.x - target.x) ** 2 + (a.z - target.z) ** 2;
       if (score < best) { best = score; candidate = a; }
     }

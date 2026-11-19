@@ -1,5 +1,5 @@
 import * as T from 'three';
-import { CAP } from '../sim/config.js';
+import { SCENE_CAP } from '../sim/config.js';
 import { animateCreature } from './shaders/creature.js';
 import { advanceLocomotion, orientLocomotion } from './locomotion.js';
 
@@ -46,15 +46,17 @@ export class AnimalModels {
       geometry.setAttribute(key, new T.BufferAttribute(values, 3));
     }
     geometry.applyMatrix4(source.matrixWorld);
-    const motion = new T.InstancedBufferAttribute(new Float32Array(CAP * 4), 4).setUsage(T.DynamicDrawUsage);
+    const motion = new T.InstancedBufferAttribute(new Float32Array(SCENE_CAP * 4), 4).setUsage(T.DynamicDrawUsage);
     geometry.setAttribute('aMotion', motion);
-    const expression = new T.InstancedBufferAttribute(new Float32Array(CAP * 4), 4).setUsage(T.DynamicDrawUsage);
+    const expression = new T.InstancedBufferAttribute(new Float32Array(SCENE_CAP * 4), 4).setUsage(T.DynamicDrawUsage);
     geometry.setAttribute('aExpression', expression);
+    const combat = new T.InstancedBufferAttribute(new Float32Array(SCENE_CAP * 4), 4).setUsage(T.DynamicDrawUsage);
+    geometry.setAttribute('aCombat', combat);
     const kind = { value: species };
     const material = source.material.clone();
     animateCreature(material, this.time, kind);
     register(material);
-    const mesh = new T.InstancedMesh(geometry, material, CAP);
+    const mesh = new T.InstancedMesh(geometry, material, SCENE_CAP);
     const depth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
     animateCreature(depth, this.time, kind, true);
     mesh.customDepthMaterial = depth;
@@ -62,7 +64,7 @@ export class AnimalModels {
     mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
     mesh.receiveShadow = true;
     mesh.count = 0;
-    return { mesh, motion, expression };
+    return { mesh, motion, expression, combat };
   }
 
   draw(records, camera, dt, time, map, profile, tracked) {
@@ -79,7 +81,7 @@ export class AnimalModels {
       const distance = this.position.copy(this.bounds.center).distanceToSquared(camera.position);
       if (distance > profile.faunaFar ** 2 || a.id === tracked && distance > 365 ** 2) continue;
       const level = distance < profile.faunaNear ** 2 || (a.id === tracked && distance < 82 ** 2) ? 1 : 0;
-      const { mesh, motion, expression } = this.batches[a.species][level];
+      const { mesh, motion, expression, combat } = this.batches[a.species][level];
       const row = mesh.count++;
       const scale = sizes[a.species] * (1 + a.sizeTrait * .13);
       orientLocomotion(object, a, pose);
@@ -92,13 +94,14 @@ export class AnimalModels {
         pose.crouch * (1 - pose.swim), pose.attack * (1 - pose.swim), pose.phase);
       expression.setXYZW(row, pose.trot * (1 - pose.swim) + pose.swim * .78, pose.run * (1 - pose.swim),
         pose.graze * (1 - pose.swim), Math.max(pose.alert, pose.swim * .85));
+      combat.setXYZW(row, pose.prep, pose.lunge, pose.flinch, pose.down);
     }
     for (const pair of this.batches) {
-      for (const [level, { mesh, motion, expression }] of pair.entries()) {
+      for (const [level, { mesh, motion, expression, combat }] of pair.entries()) {
         mesh.castShadow = profile.shadows > 0 && level === 1;
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-        motion.needsUpdate = expression.needsUpdate = true;
+        motion.needsUpdate = expression.needsUpdate = combat.needsUpdate = true;
       }
     }
   }

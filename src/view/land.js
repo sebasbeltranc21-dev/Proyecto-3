@@ -1,3 +1,4 @@
+import { propChunks, solidProps } from '../sim/props.js';
 import * as T from 'three';
 import { mergeGeometries, mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { CHANNELS, GRID, HALF, SIZE, STEP, WATER, clamp, rng } from '../sim/config.js';
@@ -246,32 +247,25 @@ function cover(scene, register) {
   const rockMaterial = new T.MeshStandardMaterial({ color: 0x9aa09e, roughness: .86 });
   for (const material of [treeMaterial, grassMaterial, shrubMaterial, rockMaterial]) register(material);
   const chunks = [];
-  const random = rng(185513);
-  for (let v = 0; v < 5; v++) {
-    for (let u = 0; u < 5; u++) {
-      const trees = new T.InstancedMesh(nearPine, treeMaterial, 130);
-      const grass = new T.InstancedMesh(blade, grassMaterial, 640);
-      const shrubs = new T.InstancedMesh(shrub, shrubMaterial, 44);
-      const rock = new T.InstancedMesh(rockGeometry, rockMaterial, 52);
-      const centerX = (u + .5) * 64 - HALF, centerZ = (v + .5) * 64 - HALF;
-      trees.castShadow = true;
-      trees.customDepthMaterial = treeDepth;
-      trees.receiveShadow = true;
-      grass.receiveShadow = true;
-      shrubs.receiveShadow = true;
-      rock.castShadow = true;
-      rock.receiveShadow = true;
-      for (const item of [trees, grass, rock, shrubs]) {
-        item.count = 0;
-        item.boundingSphere = new T.Sphere(new T.Vector3(centerX, 12, centerZ), 66);
-        scene.add(item);
-      }
-      const candidates = Array.from({ length: 640 }, () => ({
-        x: centerX + (random() - .5) * 64, z: centerZ + (random() - .5) * 64,
-        density: random(), scale: random(), angle: random() * Math.PI * 2,
-      }));
-      chunks.push({ trees, grass, rock, shrubs, centerX, centerZ, candidates, high: true, grassCount: 0 });
+  for (const placement of propChunks) {
+    const trees = new T.InstancedMesh(nearPine, treeMaterial, 130);
+    const grass = new T.InstancedMesh(blade, grassMaterial, 640);
+    const shrubs = new T.InstancedMesh(shrub, shrubMaterial, 44);
+    const rock = new T.InstancedMesh(rockGeometry, rockMaterial, 52);
+    const { centerX, centerZ, candidates } = placement;
+    trees.castShadow = true;
+    trees.customDepthMaterial = treeDepth;
+    trees.receiveShadow = true;
+    grass.receiveShadow = true;
+    shrubs.receiveShadow = true;
+    rock.castShadow = true;
+    rock.receiveShadow = true;
+    for (const item of [trees, grass, rock, shrubs]) {
+      item.count = 0;
+      item.boundingSphere = new T.Sphere(new T.Vector3(centerX, 12, centerZ), 66);
+      scene.add(item);
     }
+    chunks.push({ trees, grass, rock, shrubs, centerX, centerZ, candidates, high: true, grassCount: 0 });
   }
   const object = new T.Object3D();
   const color = new T.Color();
@@ -279,38 +273,38 @@ function cover(scene, register) {
   return {
     time, gust, tracks, focus,
     update(map, markRock) {
+      const groups = [];
       lastMap = map;
       for (const chunk of chunks) {
         const { trees, grass, rock, shrubs, candidates } = chunk;
         trees.count = grass.count = rock.count = shrubs.count = 0;
+        const solids = solidProps(map, chunk);
+        groups.push(solids);
+        for (const p of solids) {
+          const mesh = p.rock ? rock : trees;
+          object.position.set(p.x, p.y, p.z);
+          object.scale.set(p.sx, p.sy, p.sz);
+          object.rotation.set(p.rx ?? 0, p.angle, p.rz ?? 0);
+          object.updateMatrix();
+          mesh.setMatrixAt(mesh.count, object.matrix);
+          if (!p.rock) {
+            color.setHSL(.17 + map[p.at + 3] * .084 + p.density * .023, .18 + p.density * .18, .56 + p.scale * .27);
+          } else if (p.bank) {
+            color.setHSL(.22 + p.scale * .37, .08 + p.density * .12, .28 + p.scale * .27);
+            if (WATER - p.y + .07 < p.sy * .77) markRock(p.at / CHANNELS, .58 + p.scale * .42);
+          } else {
+            color.setHSL(.19 + p.scale * .12, .07 + p.density * .12, .35 + p.scale * .29);
+          }
+          mesh.setColorAt(mesh.count++, color);
+        }
         for (const [index, c] of candidates.entries()) {
           const { x, z, density, scale, angle } = c;
           const at = tile(x, z);
           const y = ground(map, x, z);
-          const depth = WATER - y;
-          if (index < 100 && depth >= -.26 && depth < 2.25 && density < .63 && rock.count < 52) {
-            const crest = .26 + scale * 1.50;
-            object.position.set(x, y + .07, z);
-            object.scale.set(.66 + scale * 1.72, crest, .54 + scale * 1.90);
-            object.rotation.set(.13 + density * .22, angle, .19);
-            object.updateMatrix();
-            rock.setMatrixAt(rock.count, object.matrix);
-            color.setHSL(.22 + scale * .37, .08 + density * .12, .28 + scale * .27);
-            rock.setColorAt(rock.count++, color);
-            if (depth < crest * .77) markRock(at / CHANNELS, .58 + scale * .42);
-          }
           if (y < WATER + .28) continue;
           object.position.set(x, y, z);
           object.rotation.set(0, angle, 0);
           const canopy = map[at + 1], food = map[at + 2], wet = map[at + 3], burning = map[at + 4];
-          if (index < 130 && density < canopy * .84 && y > .35 && burning < .36) {
-            const h = .57 + 1.19 * scale;
-            object.scale.set(.76 + h * .24, h, .76 + h * .24);
-            object.updateMatrix();
-            trees.setMatrixAt(trees.count, object.matrix);
-            color.setHSL(.17 + wet * .084 + density * .023, .18 + density * .18, .56 + scale * .27);
-            trees.setColorAt(trees.count++, color);
-          }
           if (density * .69 < food && burning < .25) {
             object.scale.set(1 + scale * .85, .47 + scale * .76, 1 + scale * .85);
             object.updateMatrix();
@@ -323,14 +317,6 @@ function cover(scene, register) {
             object.updateMatrix();
             shrubs.setMatrixAt(shrubs.count++, object.matrix);
           }
-          if (index < 28 && density < .24 && (y > 9 || y < 1.8) && rock.count < 52) {
-            object.scale.set(.8 + scale * 2.3, .58 + scale * 1.64, .8 + scale * 1.7);
-            object.rotation.set(scale * .63, angle, .35);
-            object.updateMatrix();
-            rock.setMatrixAt(rock.count, object.matrix);
-            color.setHSL(.19 + scale * .12, .07 + density * .12, .35 + scale * .29);
-            rock.setColorAt(rock.count++, color);
-          }
         }
         chunk.grassCount = grass.count;
         for (const mesh of [trees, grass, rock, shrubs]) {
@@ -338,6 +324,7 @@ function cover(scene, register) {
           if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
         }
       }
+      return groups;
     },
     lod(camera, profile) {
       if (!lastMap) return;
@@ -423,7 +410,7 @@ export function makeLand(scene, renderer, assets, register, onTextures, emitOnly
       field.needsUpdate = depth.needsUpdate = true;
       terrain.update(map);
       updateRidges(map);
-      forest.update(map, rockFoam);
+      return forest.update(map, rockFoam);
     },
     tick(time, night, weather, sun, camera, profile, focus) {
       water.elapsed.value = forest.time.value = time;

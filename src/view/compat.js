@@ -2,7 +2,6 @@ import { MOUSE, PerspectiveCamera, Raycaster, Vector2, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HALF, WATER, clamp, rng } from '../sim/config.js';
 import { ground, tile } from '../sim/terrain.js';
-import { onWaterSurface } from '../sim/river-navigation.js';
 import { SKY_PRESETS } from '../ui-data.js';
 import { Fauna } from './fauna.js';
 import { INITIAL_POSITION, INITIAL_TARGET } from './world.js';
@@ -92,6 +91,7 @@ export class CompatibilityWorld {
 
   setMap(map) {
     this.map = map;
+    this.fauna.setMap(map);
     for (const point of this.points) point.y = ground(map, point.x, point.z);
     for (const patch of this.patch) {
       const at = tile(patch.x, patch.z);
@@ -262,6 +262,7 @@ export class CompatibilityWorld {
   paintIndicators(ctx, now) {
     const rows = [];
     for (const a of this.fauna.records.values()) {
+      if (a.fallAge >= 0) continue;
       const p = this.project(a.x, a.y + .65, a.z);
       if (p.depth < -1 || p.depth > 1 || p.sx < 0 || p.sx > this.width || p.sy < 0 || p.sy > this.height) continue;
       rows.push({ a, ...p });
@@ -355,12 +356,7 @@ export class CompatibilityWorld {
     }
     this.ctx.drawImage(this.background, 0, 0, this.width, this.height);
     if (this.map) {
-      const blend = 1 - Math.exp(-dt * 13);
-      for (const a of this.fauna.records.values()) {
-        a.x += (a.tx - a.x) * blend;
-        a.z += (a.tz - a.z) * blend;
-        a.y = onWaterSurface(ground(this.map, a.x, a.z), a.targetSwimming);
-      }
+      this.fauna.advance(dt, this.map);
       this.paintWeather(this.ctx, now);
       this.paintIndicators(this.ctx, now);
     }

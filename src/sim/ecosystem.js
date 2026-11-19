@@ -1,7 +1,9 @@
-import { CAP, CHANNELS, DT, GRID, HALF, INITIAL, SPECIES, WATER, clamp, rng } from './config.js';
+import { CAP, CHANNELS, DT, FALLEN_CAP, GRID, HALF, INITIAL, SPECIES, WATER, clamp, rng } from './config.js';
 import { GENES, NI, NeuralNetwork } from './neural.js';
 import { brush, createTerrain, ground, tile } from './terrain.js';
 import { EDGE, RiverNavigation, WADE_HEIGHT, onWaterSurface } from './river-navigation.js';
+import { CollisionIndex } from './collisions.js';
+import { BITE_WINDOW, FALL_DURATION, HUNT_DURATION, WINDUP, canBite } from './hunt.js';
 
 const CELLS = 20;
 const CELL_WIDTH = HALF * 2 / CELLS;
@@ -23,8 +25,11 @@ export class Ecosystem {
     this.seed = seed;
     this.random = rng(seed);
     this.map = createTerrain(seed);
-    this.river = new RiverNavigation(this.map);
+    this.collisions = new CollisionIndex();
+    this.collisions.setMap(this.map);
+    this.river = new RiverNavigation(this.map, this.collisions);
     this.agents = [];
+    this.fallen = [];
     this.byId = new Map();
     this.buckets = Array.from({ length: CELLS ** 2 }, () => []);
     this.archive = [[], []];
@@ -88,11 +93,14 @@ export class Ecosystem {
       cooldown: parent ? 30 : 7 + random() * 24, attackCD: 0, speed: 0, signal: 0, hidden: false,
       kills: 0, assists: 0, escapes: 0, moves: 0, drinks: 0,
       lastAttacker: 0, touched: -100, lastShelter: -100, lastMove: -100,
+      huntStarted: -100, biteAt: -100, hitAt: -100, fallAt: -100, attackTarget: 0,
       terrainCell: tile(x, z), resourceX: x, resourceZ: z,
       generation, lineage, mutations: variation.mutations,
       brain: variation.brain, inputs: new Float32Array(NI), action: 'Explorando',
     };
     this.river.sync(a);
+    if (this.collisions.separate(a)) this.river.sync(a);
+    this.collisions.insert(a);
     this.agents.push(a);
     this.byId.set(a.id, a);
     if (inherited) {
@@ -115,7 +123,19 @@ export class Ecosystem {
       this.river.invalidate();
       for (const agent of this.agents) this.river.sync(agent);
     }
+    this.refreshColliders();
     this.edited = true;
+  }
+
+  refreshColliders() {
+    this.collisions.setMap(this.map);
+    this.collisions.rebuild(this.agents, this.fallen);
+    for (const agent of this.agents) {
+      if (this.collisions.separate(agent)) {
+        this.river.sync(agent);
+        this.collisions.move(agent);
+      }
+    }
   }
 
   record() {
@@ -209,7 +229,8 @@ export class Ecosystem {
     for (const [index, ray] of RAYS.entries()) {
       const angle = a.angle + ray;
       const near = tile(a.x + Math.sin(angle) * 5.8, a.z + Math.cos(angle) * 5.8);
-      input[18 + index] = clamp(Math.abs(map[near] - map[a.terrainCell]) / 10 +
+      const blocked = !this.collisions.clearLine(a.x, a.z, a.x + Math.sin(angle) * 3.2, a.z + Math.cos(angle) * 3.2);
+      input[18 + index] = clamp(Number(blocked) * .75 + Math.abs(map[near] - map[a.terrainCell]) / 10 +
         map[near + 4] + Math.max(0, map[near + 1] - .78));
     }
     a.fear = clamp(Math.max(input[3] * 1.22, a.fear - DT * .10) + map[a.terrainCell + 4] * .04);
@@ -237,10 +258,46 @@ export class Ecosystem {
     a.hidden = gait < .29 && map[oldTerrain + 1] > .54;
     const sprint = gait > .68;
     const pace = sprint ? 1.18 : a.hidden ? .32 : .73;
-    const wanted = a.angle + turn * DT * 2.55;
+    let wanted = a.angle + turn * DT * 2.55;
     a.speed = throttle * species.baseSpeed * pace * (.52 + a.energy * .48);
     a.action = a.hidden ? 'Ocultándose' : sprint ? 'Corriendo' : a.signal ? 'Emitiendo señal' : 'Explorando';
+    let target = this.byId.get(a.attackTarget);
+    const huntAge = this.time - a.huntStarted;
+    if (huntAge >= HUNT_DURATION) {
+      a.attackTarget = 0;
+      target = undefined;
+      if (a.species && !a.swimming && !a.drinking && interact > .55 && a.attackCD <= 0 &&
+          a.hunger > .25 && victim && !victim.swimming && victim.health > 0 &&
+          this.collisions.clearLine(a.x, a.z, victim.x, victim.z)) {
+        a.attackTarget = victim.id;
+        a.huntStarted = this.time;
+        a.attackCD = HUNT_DURATION + .12;
+        target = victim;
+      }
+    }
+    const hunting = Boolean(a.attackTarget) && this.time - a.huntStarted < HUNT_DURATION;
+    if (hunting && !a.swimming) {
+      const phase = this.time - a.huntStarted;
+      const striking = phase >= WINDUP && phase <= BITE_WINDOW && a.biteAt < a.huntStarted;
+      if (target?.health > 0 && (phase < WINDUP || striking)) {
+        const heading = Math.atan2(target.x - a.x, target.z - a.z);
+        wanted = a.angle + clamp(Math.atan2(Math.sin(heading - a.angle), Math.cos(heading - a.angle)), -.29, .29);
+      }
+      // Crouch in place and plant the forelegs once the target is within bite range.
+      const contact = striking && canBite(this.collisions, a, target);
+      if (phase < WINDUP || contact) a.speed = 0;
+      else if (striking) a.speed = Math.max(a.speed, 7.4);
+      else a.speed *= .50;
+      a.action = phase < WINDUP ? 'Preparando ataque' : striking ? 'Cazando' : 'Recuperándose';
+    }
+    const hurt = this.time - a.hitAt < .24;
+    if (hurt) a.speed *= .46;
     const drank = this.river.step(a, wanted, this.random);
+    this.collisions.move(a);
+    const phase = this.time - a.huntStarted;
+    if (hunting && phase >= WINDUP && phase <= BITE_WINDOW && a.biteAt < a.huntStarted && canBite(this.collisions, a, target)) {
+      this.attack(a, target);
+    }
     if (a.drinking) a.action = drank ? 'Bebiendo' : 'Buscando la orilla';
 
     const at = a.terrainCell;
@@ -253,15 +310,13 @@ export class Ecosystem {
       a.thirst = Math.max(.03, a.thirst - DT * .34);
       a.drinks += DT;
     }
-    const free = !a.swimming && !a.drinking;
+    const free = !a.swimming && !a.drinking && !hunting && !hurt;
+    if (hurt && !a.swimming) a.action = 'Herido';
     if (free && !a.species && interact > .55 && map[at + 2] > .14 && a.hunger > .23) {
       const bite = Math.min(DT * .17, map[at + 2]);
       a.hunger = Math.max(.08, a.hunger - bite * 1.65);
       map[at + 2] -= bite;
       a.action = 'Alimentándose';
-    }
-    if (free && a.species && interact > .55 && victim && !victim.swimming && victim.health > 0 && a.attackCD <= 0 && a.hunger > .25) {
-      this.attack(a, victim);
     }
     if (!a.species && a.hidden && a.fear > .16 && this.time - a.lastShelter > 9) {
       a.lastShelter = this.time;
@@ -295,9 +350,14 @@ export class Ecosystem {
     victim.lastAttacker = a.id;
     victim.touched = this.time;
     victim.health -= helper && helper !== a ? .57 : .37;
-    a.attackCD = .72;
+    a.biteAt = this.time;
+    victim.hitAt = this.time;
+    victim.fear = Math.max(victim.fear, .88);
+    victim.action = 'Herido';
     a.action = 'Cazando';
     if (victim.health > 0) return;
+    victim.fallAt = this.time;
+    victim.speed = 0;
     this.hunts++;
     a.kills++;
     a.hunger = Math.max(.05, a.hunger - .76);
@@ -334,6 +394,7 @@ export class Ecosystem {
         this.agents[alive++] = a;
         continue;
       }
+      if (a.fallAt > -1) this.fallen.push(a);
       this.counts[a.species]--;
       const archive = this.archive[a.species];
       archive.push({ id: a.id, generation: a.generation, score: this.fitness(a), brain: { genes: a.brain.genes } });
@@ -342,6 +403,7 @@ export class Ecosystem {
       this.byId.delete(a.id);
     }
     this.agents.length = alive;
+    if (this.fallen.length > FALLEN_CAP) this.fallen.splice(0, this.fallen.length - FALLEN_CAP);
   }
 
   maintainTerrain(moisture) {
@@ -382,6 +444,8 @@ export class Ecosystem {
     this.time = this.ticks * DT;
     const [temperature, visibility, moisture] = this.climate[this.weather];
     this.rebuildIndex();
+    this.fallen = this.fallen.filter(a => this.time - a.fallAt < FALL_DURATION);
+    this.collisions.rebuild(this.agents, this.fallen);
     const length = this.agents.length;
     for (let i = 0; i < length; i++) {
       const a = this.agents[i];
@@ -390,6 +454,7 @@ export class Ecosystem {
     this.prune();
     if (this.ticks % 40 === 0) {
       this.maintainTerrain(moisture);
+      this.refreshColliders();
       this.record();
     }
     if (this.ticks % 100 === 0) {
@@ -405,12 +470,13 @@ export class Ecosystem {
   }
 
   inspect(id) {
-    const a = this.byId.get(id);
+    const a = this.byId.get(id) ?? this.fallen.find(agent => agent.id === id);
     if (!a) return null;
     const { species, generation, lineage, mutations, age, hunger, thirst, energy, health, fear, action } = a;
     const { kills, assists, moves, escapes, speed } = a;
     return {
-      id, species, generation, lineage, mutations, age, hunger, thirst, energy, health, fear, action,
+      id, species, generation, lineage, mutations, age, hunger, thirst, energy, health: Math.max(0, health), fear,
+      action: a.fallAt > -1 ? 'Capturada' : action,
       kills, assists, moves, escapes, speed, fitness: this.fitness(a),
       inputs: Array.from(a.inputs), hidden: Array.from(a.brain.hidden), outputs: Array.from(a.brain.outputs),
       genes: Array.from(a.brain.genes.subarray(0, GENES)),

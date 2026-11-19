@@ -1,6 +1,7 @@
 import { Matrix4, Quaternion, Vector3 } from 'three';
 import { clamp } from '../sim/config.js';
 import { ground } from '../sim/terrain.js';
+import { BITE_WINDOW, HUNT_DURATION, WINDUP } from '../sim/hunt.js';
 
 const TAU = 2 * Math.PI;
 const balance = new Matrix4();
@@ -17,7 +18,8 @@ export function newLocomotion(id) {
   return {
     pace: 0, stride: 0, trot: 0, run: 0, crouch: 0, alert: 0, graze: 0, attack: 0,
     phase: (id * .397) % TAU, bank: 0, hop: 0, hopAge: 1, previousFear: 0,
-    sx: 0, sz: 0, swim: 0,
+    sx: 0, sz: 0, swim: 0, prep: 0, lunge: 0, flinch: 0, down: 0,
+    huntClock: 0, huntStarted: -100,
   };
 }
 
@@ -41,6 +43,23 @@ export function advanceLocomotion(a, dt, map) {
   p.alert += (alert - p.alert) * blend;
   p.graze += (a.feeding * (1 - p.run * .81) - p.graze) * (1 - Math.exp(-dt * 5));
   p.attack += (a.attacking - p.attack) * (1 - Math.exp(-dt * (a.attacking > p.attack ? 15 : 8)));
+  const age = a.huntAge ?? -1;
+  if (age >= 0) {
+    if (p.huntStarted !== a.huntStarted) {
+      p.huntStarted = a.huntStarted;
+      p.huntClock = age;
+    } else p.huntClock = Math.min(age + .11, Math.max(age, p.huntClock + dt));
+  }
+  const t = age < 0 || a.swimming ? HUNT_DURATION : p.huntClock;
+  const prep = smooth(0, .115, t) * (1 - smooth(WINDUP - .025, WINDUP + .075, t));
+  const lunge = smooth(WINDUP - .04, WINDUP + .087, t) * (1 - smooth(BITE_WINDOW - .07, .60, t));
+  const hurt = a.hurtAge ?? -1, fall = a.fallAge ?? -1;
+  const flinch = hurt < 0 ? 0 : (1 - smooth(.045, .34, hurt));
+  p.prep += (prep - p.prep) * (1 - Math.exp(-dt * 19));
+  p.lunge += (lunge - p.lunge) * (1 - Math.exp(-dt * 22));
+  p.flinch += (flinch - p.flinch) * (1 - Math.exp(-dt * 21));
+  p.down += ((fall < 0 ? 0 : smooth(0, .55, fall)) - p.down) * (1 - Math.exp(-dt * 14));
+
   const fear = a.fear;
   p.hopAge += dt;
   if (!a.swimming && fear > .42 && fear > p.previousFear + .055 && p.hopAge > .85 && !a.hidden) p.hopAge = 0;
@@ -67,8 +86,10 @@ export function orientLocomotion(object, a, p) {
   right.crossVectors(up, forward).normalize();
   forward.crossVectors(right, up).normalize();
   balance.makeBasis(right, up, forward);
-  bank.setFromAxisAngle(zAxis, p.bank * (1 - p.swim * .90));
+  const roll = (a.id % 2 ? 1 : -1) * (p.down * 1.46 + p.flinch * .18);
+  bank.setFromAxisAngle(zAxis, p.bank * (1 - p.swim * .90) * (1 - p.down) + roll);
   object.quaternion.setFromRotationMatrix(balance).multiply(bank);
   const buoyancy = a.swimming ? -.58 + .035 * Math.sin(p.phase) : 0;
-  object.position.set(a.x, a.y + .025 + buoyancy + p.hop * (a.swimming ? 0 : 1), a.z);
+  const grounded = .35 * p.down - .085 * p.prep + .16 * p.lunge;
+  object.position.set(a.x, a.y + .025 + buoyancy + grounded + p.hop * (a.swimming ? 0 : 1 - p.down), a.z);
 }

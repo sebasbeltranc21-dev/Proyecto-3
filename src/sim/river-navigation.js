@@ -17,7 +17,7 @@ function turnToward(a, heading, limit) {
   a.angle += clamp(angleDiff(heading, a.angle), -limit, limit);
 }
 
-function upright(map, a, yaw, length, minHeight) {
+function upright(map, collisions, a, yaw, length, minHeight) {
   const dx = Math.sin(yaw) * length;
   const dz = Math.cos(yaw) * length;
   const x = a.x + dx, z = a.z + dz;
@@ -26,7 +26,8 @@ function upright(map, a, yaw, length, minHeight) {
   return height >= minHeight &&
     ground(map, a.x + dx / 3, a.z + dz / 3) >= minHeight &&
     ground(map, a.x + dx * 2 / 3, a.z + dz * 2 / 3) >= minHeight &&
-    Math.abs(map[tile(x, z)] - map[a.terrainCell]) < 11;
+    Math.abs(map[tile(x, z)] - map[a.terrainCell]) < 11 &&
+    (!collisions || collisions.canMove(a, x, z, yaw));
 }
 
 function bankDirection(map, a, height, range) {
@@ -53,8 +54,9 @@ export function onWaterSurface(height, swimming = false) {
 }
 
 export class RiverNavigation {
-  constructor(map) {
+  constructor(map, collisions) {
     this.map = map;
+    this.collisions = collisions;
     this.revision = 0;
     this.dry = null;
     this.exits = new Map();
@@ -118,15 +120,22 @@ export class RiverNavigation {
     if (!goal) { a.speed = 0; return; }
     const dx = goal.x - a.x, dz = goal.z - a.z;
     const distance = Math.hypot(dx, dz);
-    const heading = Math.atan2(dx, dz);
-    turnToward(a, heading, DT * 6.5);
+    const target = Math.atan2(dx, dz);
     const length = Math.min(distance, DT * (1.62 + .67 * a.energy));
-    // Direction follows the bank vector even if the visible body is still turning.
-    if (distance > 1e-5) {
-      a.x += dx / distance * length;
-      a.z += dz / distance * length;
+    let moved = false;
+    for (const offset of [0, ...PROBES]) {
+      const heading = target + offset * (a.shoreSide ?? 1);
+      const angle = a.angle + clamp(angleDiff(heading, a.angle), -DT * 6.5, DT * 6.5);
+      const x = a.x + Math.sin(heading) * length, z = a.z + Math.cos(heading) * length;
+      if (Math.abs(x) > EDGE || Math.abs(z) > EDGE || this.collisions && !this.collisions.canMove(a, x, z, angle)) continue;
+      a.x = x;
+      a.z = z;
+      a.angle = angle;
+      if (offset) a.shoreSide = Math.sign(offset) * (a.shoreSide ?? 1);
+      moved = true;
+      break;
     }
-    a.speed = length / DT;
+    a.speed = moved ? length / DT : 0;
     a.terrainCell = tile(a.x, a.z);
     this.sync(a);
     if (!a.swimming) a.action = 'Saliendo del agua';
@@ -135,11 +144,15 @@ export class RiverNavigation {
   step(a, desired, random) {
     const height = this.sync(a);
     if (a.swimming) { this.swim(a); return false; }
-    const { map } = this;
+    const { map, collisions } = this;
+    const originalAngle = a.angle;
     const thirsty = a.thirst > (a.drinking ? .115 : .245) && a.fear < .86;
     const bank = thirsty ? bankDirection(map, a, height, a.thirst > .48 ? 2.76 : REACH) : null;
     if (bank && bank.distance <= REACH && height <= WATER + .83) {
       turnToward(a, bank.heading, DT * 4.5);
+      const angle = a.angle;
+      a.angle = originalAngle;
+      if (!collisions || collisions.canMove(a, a.x, a.z, angle)) a.angle = angle;
       a.speed = 0;
       a.drinking = true;
       return Math.abs(angleDiff(bank.heading, a.angle)) < .52;
@@ -151,23 +164,30 @@ export class RiverNavigation {
     }
 
     const length = a.speed * DT;
+    if (!length) {
+      if (!collisions || collisions.canMove(a, a.x, a.z, desired)) a.angle = desired;
+      return false;
+    }
     const minHeight = bank ? DRINK_HEIGHT : WADE_HEIGHT;
     const wantedX = a.x + Math.sin(desired) * length;
     const wantedZ = a.z + Math.cos(desired) * length;
     if (Math.abs(wantedX) > EDGE || Math.abs(wantedZ) > EDGE) {
-      a.angle = Math.atan2(-a.x, -a.z) + (random() - .5) * .8;
+      turnToward(a, Math.atan2(-a.x, -a.z) + (random() - .5) * .8, DT * 6.3);
+      const reflected = a.angle;
+      a.angle = originalAngle;
+      if (!collisions || collisions.canMove(a, a.x, a.z, reflected)) a.angle = reflected;
       a.speed = 0;
       return false;
     }
     // Anticipate the shoreline and favour the first safe heading on either side.
     const look = Math.max(length, bank ? length : .92);
-    const canMove = upright(map, a, desired, length, minHeight);
+    const canMove = upright(map, collisions, a, desired, length, minHeight);
     let heading = desired;
-    if (!upright(map, a, desired, look, minHeight)) {
+    if (!upright(map, collisions, a, desired, look, minHeight)) {
       const side = a.shoreSide ?? (a.id % 2 ? 1 : -1);
       let found = false;
       for (const offset of PROBES) {
-        if (!upright(map, a, desired + offset * side, look, minHeight)) continue;
+        if (!upright(map, collisions, a, desired + offset * side, look, minHeight)) continue;
         heading = desired + offset * side;
         a.shoreSide = Math.sign(offset) * side;
         found = true;
@@ -179,11 +199,32 @@ export class RiverNavigation {
       a.angle = desired;
       a.shoreSide = null;
     }
-    if (length > 0 && upright(map, a, a.angle, length, minHeight)) {
+    const turned = a.angle;
+    a.angle = originalAngle;
+    if (length > 0 && upright(map, collisions, a, turned, length, minHeight)) {
+      a.angle = turned;
       a.x += Math.sin(a.angle) * length;
       a.z += Math.cos(a.angle) * length;
       a.terrainCell = tile(a.x, a.z);
-    } else a.speed = 0;
+    } else {
+      if (!collisions || collisions.canMove(a, a.x, a.z, turned)) a.angle = turned;
+      a.speed = 0;
+      // Close objects can block a turn in place. Take a short sideways step to make room.
+      if (collisions && length > 0 && !canMove) {
+        for (const offset of PROBES) {
+          const heading = originalAngle + offset;
+          const stride = length * .66;
+          const x = a.x + Math.sin(heading) * stride, z = a.z + Math.cos(heading) * stride;
+          if (Math.abs(x) > EDGE || Math.abs(z) > EDGE || ground(map, x, z) < minHeight ||
+              Math.abs(map[tile(x, z)] - map[a.terrainCell]) >= 11 || !collisions.canMove(a, x, z, a.angle)) continue;
+          a.x = x;
+          a.z = z;
+          a.speed = stride / DT;
+          a.terrainCell = tile(x, z);
+          break;
+        }
+      }
+    }
     return false;
   }
 }

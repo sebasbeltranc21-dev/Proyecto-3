@@ -1,6 +1,7 @@
 const form = `
 attribute vec4 aMotion;
 attribute vec4 aExpression;
+attribute vec4 aCombat;
 uniform float bodyTime, kind;
 
 float neckWeight(vec3 p){
@@ -11,7 +12,7 @@ float neckWeight(vec3 p){
 float neckPitch(vec3 p){
   float pace=aMotion.x, phase=aMotion.w;
   return neckWeight(p)*(mix(1.49,1.19,kind)*aExpression.z-.55*aExpression.w+.32*aMotion.z+
-    sin(phase*2.+.7)*pace*mix(.025,.13,aExpression.y));
+    sin(phase*2.+.7)*pace*mix(.025,.13,aExpression.y) + .24*aCombat.x - .36*aCombat.y - .23*aCombat.z + .44*aCombat.w);
 }
 vec2 rotatePitch(vec2 point,float angle){
   float c=cos(angle),s=sin(angle);
@@ -50,7 +51,17 @@ vec3 poseAnimal(vec3 p){
   p.z+=head*strike*.27;
   p.y-=head*strike*.12;
   float tail=1.-smoothstep(mix(-.88,-1.32,kind),mix(-.69,-.68,kind),p.z);
-  p.x+=sin(cycle*.69+bodyTime*1.7)*tail*(.027+stride*.082);
+  p.x+=sin(cycle*.69+bodyTime*1.7)*tail*(.027+stride*.082)*(1.-aCombat.w);
+  float prep=aCombat.x, lunge=aCombat.y, flinch=aCombat.z, down=aCombat.w;
+  float frontChest=smoothstep(-.22,.54,p.z);
+  p.y-=prep*(.12*frontChest+.05)*(1.-limb*.58);
+  p.y+=lunge*(.14*frontChest+.04)*smoothstep(.04,.61,p.y);
+  p.z+=limb*lunge*(fore ? .23 : -.20);
+  p.y+=limb*(flinch*(fore ? .20 : .13)+down*.37);
+  p.z+=limb*down*(fore ? -.19 : .23);
+  p.x+=flinch*(fore ? .10 : -.047)*(1.-limb);
+  p.z+=head*lunge*.12;
+  p.y-=head*down*.20;
   return p;
 }
 `;
@@ -76,5 +87,5 @@ export function animateCreature(material, time, species, depth = false) {
       diffuseColor.rgb *= 1.+(.14*fibres+.075*grain)*filtered;
     `);
   };
-  material.customProgramCacheKey = () => depth ? 'animal-depth-4' : 'animal-coat-4';
+  material.customProgramCacheKey = () => depth ? 'animal-depth-5' : 'animal-coat-5';
 }

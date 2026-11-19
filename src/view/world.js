@@ -107,7 +107,7 @@ export class World {
 
   setMap(map, time) {
     this.map = map;
-    this.land.update(map, time);
+    this.fauna.setMap(map, this.land.update(map, time));
   }
 
   resetEffects() {
