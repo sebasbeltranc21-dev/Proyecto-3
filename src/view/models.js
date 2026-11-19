@@ -8,9 +8,10 @@ const LODS = ['far', 'near'];
 const sizes = [1.12, 1.06];
 
 export class AnimalModels {
-  constructor(scene, assets, register, onReady) {
+  constructor(scene, assets, register, onReady, emitOnly) {
     this.batches = [[], []];
     this.time = { value: 0 };
+    this.eyes = { night: { value: 0 }, mask: emitOnly };
     this.frustum = new T.Frustum();
     this.viewProjection = new T.Matrix4();
     this.position = new T.Vector3();
@@ -54,11 +55,11 @@ export class AnimalModels {
     geometry.setAttribute('aCombat', combat);
     const kind = { value: species };
     const material = source.material.clone();
-    animateCreature(material, this.time, kind);
+    animateCreature(material, this.time, kind, this.eyes);
     register(material);
     const mesh = new T.InstancedMesh(geometry, material, SCENE_CAP);
     const depth = new T.MeshDepthMaterial({ depthPacking: T.RGBADepthPacking });
-    animateCreature(depth, this.time, kind, true);
+    animateCreature(depth, this.time, kind, this.eyes, true);
     mesh.customDepthMaterial = depth;
     mesh.frustumCulled = false; // The batch contains only agents culled against the active camera.
     mesh.instanceMatrix.setUsage(T.DynamicDrawUsage);
@@ -67,9 +68,10 @@ export class AnimalModels {
     return { mesh, motion, expression, combat };
   }
 
-  draw(records, camera, dt, time, map, profile, tracked) {
+  draw(records, camera, dt, time, map, profile, tracked, night) {
     if (!this.ready) return;
     this.time.value = time;
+    this.eyes.night.value = night;
     this.viewProjection.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     this.frustum.setFromProjectionMatrix(this.viewProjection);
     for (const pair of this.batches) for (const { mesh } of pair) mesh.count = 0;
@@ -96,8 +98,9 @@ export class AnimalModels {
         pose.graze * (1 - pose.swim), Math.max(pose.alert, pose.swim * .85));
       combat.setXYZW(row, pose.prep, pose.lunge, pose.flinch, pose.down);
     }
-    for (const pair of this.batches) {
+    for (const [species, pair] of this.batches.entries()) {
       for (const [level, { mesh, motion, expression, combat }] of pair.entries()) {
+        mesh.userData.bloom = species === 1 && night > .63 && mesh.count > 0;
         mesh.castShadow = profile.shadows > 0 && level === 1;
         mesh.instanceMatrix.needsUpdate = true;
         if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;

@@ -9,7 +9,7 @@ let since = 0;
 let version = 0;
 let pool = [];
 
-function send() {
+function send(clockChanged = false) {
   const buffer = pool.pop() ?? new ArrayBuffer(SCENE_CAP * STRIDE * Float32Array.BYTES_PER_ELEMENT);
   const agents = new Float32Array(buffer);
   const subjects = sim.agents.concat(sim.fallen);
@@ -36,15 +36,16 @@ function send() {
     agents[at + 17] = a.hitAt > -1 ? sim.time - a.hitAt : -1;
     agents[at + 18] = a.fallAt > -1 ? sim.time - a.fallAt : -1;
     agents[at + 19] = a.huntStarted;
+    agents[at + 20] = a.signalAt;
   }
   const transfer = [buffer];
   const terrain = sim.edited ? sim.map.slice() : undefined;
   if (terrain) transfer.push(terrain.buffer);
   sim.edited = false;
-  const { time, counts, generation, births, mutations, recoveries, hunts, cooperative, shelter, migrations, weather, events, history } = sim;
+  const { time, hour, counts, generation, births, mutations, recoveries, hunts, cooperative, shelter, migrations, weather, events, history } = sim;
   postMessage({
-    type: 'snapshot', version, agents, length: subjects.length, terrain, selected: sim.inspect(selected),
-    stats: { time, counts, generation, births, mutations, recoveries, hunts, cooperative, shelter, migrations, weather, events, history },
+    type: 'snapshot', version, agents, length: subjects.length, terrain, clockChanged, selected: sim.inspect(selected),
+    stats: { time, hour, counts, generation, births, mutations, recoveries, hunts, cooperative, shelter, migrations, weather, events, history },
   }, transfer);
 }
 
@@ -67,6 +68,10 @@ self.onmessage = ({ data }) => {
     send();
   }
   if (data.type === 'speed') speed = data.speed;
+  if (data.type === 'day' && Number.isFinite(data.hour)) {
+    sim.setHour(data.hour);
+    send(true);
+  }
   if (data.type === 'weather' && Object.hasOwn(sim.climate, data.weather)) {
     sim.weather = data.weather;
     send();

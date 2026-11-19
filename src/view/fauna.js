@@ -23,12 +23,12 @@ const parts = [
 ];
 
 export class Fauna {
-  constructor(scene, assets, register, onModels) {
+  constructor(scene, assets, register, onModels, emitOnly) {
     this.records = new Map();
     this.test = new T.Vector3();
     this.collisions = new CollisionIndex();
     if (!scene) return;
-    this.models = new AnimalModels(scene, assets, register, onModels);
+    this.models = new AnimalModels(scene, assets, register, onModels, emitOnly);
     this.colors = [new T.Color(0xbfe98e), new T.Color(0xf0a266)];
     this.points = new T.InstancedMesh(
       new T.RingGeometry(.58, .85, 14).rotateX(-Math.PI / 2),
@@ -73,7 +73,7 @@ export class Fauna {
         gait: items[at + 8], coatTrait: items[at + 9], sizeTrait: items[at + 10], attacking: items[at + 11],
         fear: items[at + 12], signaling: items[at + 13], feeding: items[at + 14],
         targetSwimming: Boolean(items[at + 15]),
-        huntAge: items[at + 16], hurtAge: items[at + 17], fallAge: items[at + 18], huntStarted: items[at + 19],
+        huntAge: items[at + 16], hurtAge: items[at + 17], fallAge: items[at + 18], huntStarted: items[at + 19], signalAt: items[at + 20],
       });
       this.records.set(id, record);
     }
@@ -127,12 +127,11 @@ export class Fauna {
     }
   }
 
-  tick(dt, time, map, tracked, markers, profile, camera) {
+  tick(dt, time, map, tracked, markers, profile, camera, night, documentary) {
     if (!map) return;
-    this.advance(dt, map);
     let row = 0;
     let marks = 0;
-    this.selection.visible = this.records.has(tracked);
+    this.selection.visible = !documentary && this.records.has(tracked);
     for (const a of this.records.values()) {
       const sin = Math.sin(a.angle), cos = Math.cos(a.angle);
       const size = a.species ? 1.16 : 1.24;
@@ -166,7 +165,7 @@ export class Fauna {
       }
       row++;
     }
-    this.models.draw(this.records.values(), camera, dt, time, map, profile, tracked);
+    this.models.draw(this.records.values(), camera, dt, time, map, profile, tracked, night);
     for (const mesh of this.meshes) {
       mesh.visible = !this.models.ready;
       if (!mesh.visible) continue;
@@ -175,7 +174,7 @@ export class Fauna {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
     this.points.count = marks;
-    this.points.visible = markers;
+    this.points.visible = markers && !documentary;
     this.points.instanceMatrix.needsUpdate = true;
     if (this.points.instanceColor) this.points.instanceColor.needsUpdate = true;
   }

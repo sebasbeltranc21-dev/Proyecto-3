@@ -4,6 +4,9 @@ import { showAgent, showStats, shell } from './panels.js';
 import { SKY_PRESETS, TOOLS, icon } from './ui-data.js';
 import { World } from './view/world.js';
 import { CompatibilityWorld } from './view/compat.js';
+import { AudioEngine } from './audio/AudioEngine.js';
+import { START_HOUR } from './sim/day-cycle.js';
+import { SPECIES } from './sim/config.js';
 
 const app = document.querySelector('#app');
 app.innerHTML = shell();
@@ -36,34 +39,68 @@ function start(world) {
   let initialSelect = !matchMedia('(max-width: 850px)').matches;
   const followButton = get('follow');
   const inspector = get('inspector');
+  const audioButton = get('audio');
+  const dayControl = get('day');
+  const documentary = get('documentary');
+  const exitButton = get('exit-documentary');
+  const audio = new AudioEngine();
+  world.audio = audio;
+  audioButton.disabled = !audio.Context;
 
   function inspectVisible(visible) {
     inspector.hidden = !visible;
     get('show-inspector').hidden = visible;
   }
 
-  function followState() {
-    followButton.setAttribute('aria-pressed', world.following);
-    followButton.lastElementChild.textContent = world.following ? 'Dejar de seguir' : 'Seguir criatura';
+  function exitDocumentary(restoreFocus = true) {
+    if (documentary.hidden) return;
+    world.documentary.exit();
+    documentary.hidden = true;
+    app.classList.remove('documentary-mode');
+    followButton.setAttribute('aria-pressed', false);
+    if (restoreFocus) followButton.focus({ preventScroll: true });
+  }
+
+  function enterDocumentary() {
+    const animal = world.fauna.records.get(world.selectedId);
+    if (!world.documentary.enter(animal)) return;
+    anchor = null;
+    world.ring.visible = false;
+    get('documentary-id').textContent = `${SPECIES[animal.species].name} #${animal.id}`;
+    get('documentary-action').textContent = snapshot?.id === animal.id ? snapshot.action : 'Explorando';
+    followButton.setAttribute('aria-pressed', true);
+    app.classList.add('documentary-mode');
+    documentary.hidden = false;
+    exitButton.focus({ preventScroll: true });
+  }
+
+  async function toggleAudio() {
+    audioButton.disabled = true;
+    const enabled = await audio.setEnabled(!audio.enabled);
+    audioButton.innerHTML = icon(enabled ? 'audio' : 'mute');
+    audioButton.setAttribute('aria-pressed', enabled);
+    audioButton.title = enabled ? 'Silenciar sonido' : 'Activar sonido';
+    audioButton.setAttribute('aria-label', audioButton.title);
+    audioButton.disabled = false;
   }
 
   function select(id) {
     if (!id) return;
     world.selectedId = id;
-    world.following = false;
     inspectVisible(true);
-    followState();
     send({ type: 'inspect', id });
   }
 
   function reset() {
+    exitDocumentary(false);
     world.fauna.records.clear();
     world.resetEffects?.();
     world.selectedId = 0;
     world.weather = 'clear';
     world.time = 0;
-    world.dayOffset = 0;
-    get('day').value = 8.5;
+    world.hour = world.skyHour = START_HOUR;
+    dayControl.value = START_HOUR;
+    snapshot = null;
     world.resetView();
     showAgent(null);
     initialSelect = !inspector.hidden;
@@ -107,7 +144,8 @@ function start(world) {
   const commands = {
     pause: () => setSpeed(speed ? 0 : previous),
     reset: () => { reset(); announce('Simulación reiniciada · semilla ' + seed); },
-    camera: () => { world.resetView(); followState(); },
+    camera: () => world.resetView(),
+    audio: toggleAudio,
     markers: () => setMarkers(!world.markers),
     settings: () => {
       const panel = get('settings');
@@ -116,12 +154,8 @@ function start(world) {
     },
     'close-inspector': () => inspectVisible(false),
     'show-inspector': () => inspectVisible(true),
-    follow: () => {
-      if (!world.selectedId) return;
-      if (world.following) world.following = false;
-      else world.focus(world.selectedId, true);
-      followState();
-    },
+    follow: enterDocumentary,
+    'exit-documentary': () => exitDocumentary(),
     'pick-prey': () => select(world.fauna.nearest(world.controls.target, 0)?.id),
     'pick-predator': () => select(world.fauna.nearest(world.controls.target, 1)?.id),
   };
@@ -132,20 +166,27 @@ function start(world) {
     if (data.type !== 'snapshot') return;
     const recycle = buffer => worker.postMessage({ type: 'recycle', buffer }, [buffer]);
     if (data.version !== version) { recycle(data.agents.buffer); return; }
-    if (data.terrain) world.setMap(data.terrain, data.stats.time);
+    if (data.terrain) {
+      world.setMap(data.terrain, data.stats.time);
+      audio.setTerrain(data.terrain);
+    }
     world.fauna.snapshot(data.agents, data.length);
     recycle(data.agents.buffer);
     stats = data.stats;
     world.weather = stats.weather;
     world.time = stats.time;
+    world.hour = stats.hour;
     if (initialSelect && data.length) {
       initialSelect = false;
       select(world.fauna.nearest(world.controls.target, 0)?.id);
     }
-    if (world.selectedId && !world.fauna.records.has(world.selectedId)) {
+    const tracked = world.fauna.records.get(world.selectedId);
+    if (!documentary.hidden && (!tracked || tracked.fallAge >= 0)) {
+      exitDocumentary(Boolean(tracked));
+      if (!tracked) app.querySelector('[data-cmd="pick-prey"]').focus({ preventScroll: true });
+    }
+    if (world.selectedId && !tracked) {
       world.selectedId = 0;
-      world.following = false;
-      followState();
       showAgent(null);
     }
     for (const button of app.querySelectorAll('[data-weather]')) {
@@ -153,11 +194,13 @@ function start(world) {
       button.setAttribute('aria-pressed', active);
     }
     const now = performance.now();
-    if (now - lastHUD > 170 || data.terrain || !lastHUD) {
+    if (now - lastHUD > 170 || data.terrain || data.clockChanged || !lastHUD) {
       lastHUD = now;
-      showStats(stats, world.dayOffset, world.fps);
+      showStats(stats, world.fps);
+      if (document.activeElement !== dayControl) dayControl.value = stats.hour;
     }
     if (data.selected?.id === world.selectedId) {
+      if (!documentary.hidden) get('documentary-action').textContent = data.selected.action;
       if (snapshot?.id !== data.selected.id || now - lastInspect > 160 || !speed) {
         lastInspect = now;
         showAgent(data.selected);
@@ -179,10 +222,7 @@ function start(world) {
   get('quality').addEventListener('change', event => world.setQuality(event.target.value));
   get('markers').addEventListener('change', event => setMarkers(event.target.checked));
   get('radius').addEventListener('input', event => { get('radius-value').textContent = event.target.value + ' m'; });
-  get('day').addEventListener('input', event => {
-    world.dayOffset = (Number(event.target.value) - 8.5 - world.time / 26 + 48) % 24;
-    if (stats) showStats(stats, world.dayOffset, world.fps);
-  });
+  dayControl.addEventListener('input', () => send({ type: 'day', hour: dayControl.valueAsNumber }));
   get('seed-form').addEventListener('submit', event => {
     event.preventDefault();
     seed = get('seed').valueAsNumber >>> 0;
@@ -209,7 +249,7 @@ function start(world) {
   }
 
   c.addEventListener('pointerdown', event => {
-    if (event.button !== 0 || !event.isPrimary) return;
+    if (world.documentary.busy || event.button !== 0 || !event.isPrimary) return;
     anchor = { x: event.clientX, y: event.clientY };
     if (tool !== 'watch') {
       if (event.pointerType !== 'touch') paint(event.clientX, event.clientY);
@@ -217,7 +257,7 @@ function start(world) {
     }
   });
   c.addEventListener('pointermove', event => {
-    if (tool === 'watch') return;
+    if (world.documentary.busy || tool === 'watch') return;
     world.hover(event.clientX, event.clientY, radius());
     if (event.pointerType !== 'touch' && event.buttons === 1 && anchor) paint(event.clientX, event.clientY);
   });
@@ -232,6 +272,10 @@ function start(world) {
   c.addEventListener('pointercancel', () => { anchor = null; world.ring.visible = false; });
   c.addEventListener('pointerleave', () => { world.ring.visible = false; });
   window.addEventListener('keydown', event => {
+    if (!documentary.hidden) {
+      if (event.key === 'Escape') { event.preventDefault(); exitDocumentary(); }
+      return;
+    }
     if (/^(INPUT|SELECT|TEXTAREA|BUTTON|SUMMARY)$/.test(event.target.tagName) || event.ctrlKey || event.metaKey || event.altKey) return;
     if (event.code === 'Space') { event.preventDefault(); commands.pause(); }
     if (event.key >= '1' && event.key <= '8') setTool(TOOLS[Number(event.key) - 1][0]);

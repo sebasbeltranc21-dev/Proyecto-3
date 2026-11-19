@@ -15,26 +15,33 @@ export function makeLighting(scene, camera, renderer) {
   skyUniforms.cloudSpeed.value = .000010;
   skyUniforms.skyNight = { value: 0 };
   skyUniforms.emitOnly = { value: 0 };
+  skyUniforms.moonDirection = { value: new T.Vector3() };
+  skyUniforms.sunDisk = { value: 1 };
   skyUniforms.horizonTint = { value: scene.fog.color };
-  sky.material.fragmentShader = 'uniform float skyNight, emitOnly; uniform vec3 horizonTint;\n' + sky.material.fragmentShader.replace(
+  sky.material.fragmentShader = 'uniform float skyNight, emitOnly, sunDisk; uniform vec3 horizonTint, moonDirection;\n' + sky.material.fragmentShader.replace(
     '#include <tonemapping_fragment>',
     `
     float star=step(.99975,hash(floor(direction.xz*660.)))*smoothstep(.29,.69,direction.y);
     vec3 nocturne=mix(vec3(.019,.033,.048),vec3(.003,.010,.029),max(0.,direction.y));
     vec3 aerial=mix(vec3(.57,.67,.68),vec3(.08,.231,.37),smoothstep(0.,.54,max(0.,direction.y)));
     vec3 scattered=gl_FragColor.rgb/(1.+gl_FragColor.rgb*2.25);
-    vec3 daylight=aerial*.56+scattered*.59+vec3(1.8,1.23,.68)*sundisk;
-    vec3 skyLight=mix(daylight,nocturne+star*.24,skyNight);
+    float sunShape=sundisk*sunDisk;
+    float moonAngle=max(0.,dot(direction,moonDirection));
+    float moonShape=smoothstep(.99979,.99987,moonAngle)*smoothstep(0.,.16,moonDirection.y);
+    vec3 moon=vec3(.44,.62,.86)*(moonShape*.57+pow(moonAngle,370.)*.038);
+    vec3 daylight=aerial*.56+scattered*.59+vec3(1.8,1.23,.68)*sunShape;
+    vec3 skyLight=mix(daylight,nocturne+star*.24+moon,skyNight);
     float horizonBand=(1.-smoothstep(.01,.43,max(0.,direction.y)))*.80;
     gl_FragColor.rgb=mix(skyLight,horizonTint,horizonBand);
-    gl_FragColor.rgb+=vec3(.60,.38,.17)*sundisk*(1.-skyNight);
-    if(emitOnly>.5) gl_FragColor=vec4(vec3(4.2,2.51,1.22)*sundisk*(1.-skyNight),1.);
+    gl_FragColor.rgb+=vec3(.60,.38,.17)*sunShape*(1.-skyNight);
+    if(emitOnly>.5) gl_FragColor=vec4(vec3(4.2,2.51,1.22)*sunShape*(1.-skyNight),1.);
     #include <tonemapping_fragment>
     `);
   sky.userData.bloom = true;
   const fill = new T.HemisphereLight(0xcbe5f2, 0x62714a, .98);
   const single = new T.DirectionalLight(0xffe1bd, 2.17);
-  scene.add(sky, fill, single, single.target);
+  const moonLight = new T.DirectionalLight(0x9fbefb, 0);
+  scene.add(sky, fill, single, single.target, moonLight, moonLight.target);
   const cascades = new CSM({
     parent: scene, camera, cascades: 3, mode: 'practical', maxFar: 338,
     shadowMapSize: 2048, shadowBias: -.00012, lightNear: .1, lightFar: 760, lightMargin: 160,
@@ -44,6 +51,9 @@ export function makeLighting(scene, camera, renderer) {
   const nightFog = new T.Color(0x152633);
   const lowSunHaze = new T.Color(0xbba383);
   const normalSun = new T.Color();
+  const goldenSun = new T.Color(0xffb877), highSun = new T.Color(0xffebd7);
+  const dayFill = new T.Color(0xcbe5f2), nightFill = new T.Color(0x7899c6);
+  const lightDirection = new T.Vector3();
   // r183 applies soft filtering through PCFShadowMap.
   renderer.shadowMap.type = T.PCFShadowMap;
   renderer.shadowMap.autoUpdate = false;
@@ -103,27 +113,33 @@ export function makeLighting(scene, camera, renderer) {
   return {
     sky, skyUniforms, cascades, register, quality,
     update(elapsed, sun, night, weather, preset, profile) {
-      skyUniforms.sunPosition.value.copy(sun).multiplyScalar(1000);
+      lightDirection.set(sun.x, Math.max(.014, sun.y), sun.z).normalize();
+      skyUniforms.sunPosition.value.copy(lightDirection).multiplyScalar(1000);
+      skyUniforms.moonDirection.value.copy(sun).negate();
+      skyUniforms.sunDisk.value = T.MathUtils.smoothstep(sun.y, -.01, .06);
       skyUniforms.skyNight.value = night;
       skyUniforms.time.value = elapsed;
       skyUniforms.turbidity.value = weather === 'clear' ? 2.9 : weather === 'heat' ? 6.0 : 9.4;
       skyUniforms.mieCoefficient.value = weather === 'clear' ? .0042 : .009;
       skyUniforms.cloudDensity.value = weather === 'rain' ? .80 : weather === 'fog' ? .62 : .32;
       skyUniforms.cloudCoverage.value = weather === 'rain' ? .86 : weather === 'fog' ? .71 : .40;
-      const power = (2.95 - night * 2.76) * preset.light;
-      normalSun.setHex(sun.y < .42 ? 0xffd0a0 : 0xffebd7);
-      single.position.copy(sun).multiplyScalar(215);
+      const power = 2.95 * (1 - night) * preset.light;
+      normalSun.copy(goldenSun).lerp(highSun, T.MathUtils.smoothstep(sun.y, .02, .62));
+      single.position.copy(lightDirection).multiplyScalar(215);
       single.intensity = power;
       single.color.copy(normalSun);
-      cascades.lightDirection.copy(sun).negate();
+      cascades.lightDirection.copy(lightDirection).negate();
       for (const light of cascades.lights) {
         light.intensity = power;
         light.color.copy(normalSun);
       }
       if (renderer.shadowMap.enabled) cascades.update();
-      fill.intensity = (.85 - night * .38) * (weather === 'fog' ? 1.25 : 1);
+      moonLight.position.copy(skyUniforms.moonDirection.value).multiplyScalar(215);
+      moonLight.intensity = .50 * night * T.MathUtils.smoothstep(-sun.y, 0, .70) * preset.light;
+      fill.color.copy(dayFill).lerp(nightFill, night);
+      fill.intensity = (.85 - night * .41) * (weather === 'fog' ? 1.25 : 1);
       scene.environmentIntensity = (.63 - night * .47) * (weather === 'rain' ? .71 : 1);
-      const sunHaze = weather === 'clear' ? Math.max(0, .37 - sun.y) * (1 - night) : 0;
+      const sunHaze = weather === 'clear' ? (1 - T.MathUtils.smoothstep(sun.y, 0, .37)) * (1 - night) * .48 : 0;
       scene.fog.color.setHex(preset.color).lerp(lowSunHaze, sunHaze).lerp(nightFog, night * .88);
       scene.fog.density = preset.fog + night * .001;
       sampleSky(elapsed, sun, night, weather, profile);

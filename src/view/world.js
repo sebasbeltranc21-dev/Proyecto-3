@@ -1,13 +1,13 @@
 import * as T from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { SKY_PRESETS } from '../ui-data.js';
-import { WATER, clamp } from '../sim/config.js';
-import { ground } from '../sim/terrain.js';
+import { START_HOUR, darkness, displayHour, solarAngle } from '../sim/day-cycle.js';
 import { makeLand } from './land.js';
 import { Fauna } from './fauna.js';
 import { createAssets } from './assets.js';
 import { QUALITY } from './quality.js';
 import { makeLighting } from './lighting.js';
+import { DocumentaryCamera } from './documentary.js';
 
 export const INITIAL_POSITION = [125, 102, 176];
 export const INITIAL_TARGET = [1, 8, -27];
@@ -28,7 +28,7 @@ export class World {
     canvas.dataset.renderer = 'webgl2';
     this.land = makeLand(this.scene, this.renderer, assets, this.lighting.register,
       ok => status('textures', ok), this.lighting.skyUniforms.emitOnly);
-    this.fauna = new Fauna(this.scene, assets, this.lighting.register, ok => status('models', ok));
+    this.fauna = new Fauna(this.scene, assets, this.lighting.register, ok => status('models', ok), this.lighting.skyUniforms.emitOnly);
     this.sun = this.land.sun.clone();
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.enableDamping = true;
@@ -41,7 +41,7 @@ export class World {
     this.controls.target.set(...INITIAL_TARGET);
     this.camera.position.set(...INITIAL_POSITION);
     this.controls.update();
-    this.home = new T.Vector3();
+    this.documentary = new DocumentaryCamera(this.camera, this.controls);
     this.ray = new T.Raycaster();
     this.pointer = new T.Vector2();
     this.ring = new T.Mesh(
@@ -54,8 +54,7 @@ export class World {
     this.weather = 'clear';
     this.markers = true;
     this.selectedId = 0;
-    this.following = false;
-    this.dayOffset = 0;
+    this.hour = this.skyHour = START_HOUR;
     this.time = 0;
     this.trackUpdate = 0;
     this.shadowUpdate = 0;
@@ -135,19 +134,8 @@ export class World {
     return this.fauna.pick(x, y, this.camera, clientWidth, clientHeight);
   }
 
-  focus(id, zoom = false) {
-    const a = this.fauna.records.get(id);
-    if (!a) return;
-    if (zoom) {
-      this.camera.position.set(a.x + 5.6, a.y + 3.3, a.z + 8.1);
-      this.controls.target.set(a.x, a.y + 1.05, a.z);
-      this.controls.update();
-    }
-    this.following = zoom;
-  }
-
   resetView() {
-    this.following = false;
+    this.documentary.reset();
     this.camera.position.set(...INITIAL_POSITION);
     this.controls.target.set(...INITIAL_TARGET);
     this.controls.update();
@@ -163,25 +151,15 @@ export class World {
       this.fpsStart = elapsed;
       this.frames = 0;
     }
-    this.controls.update(dt);
-    if (this.following && this.map) {
-      const a = this.fauna.records.get(this.selectedId);
-      if (a) {
-        const target = this.controls.target;
-        this.home.set(a.x, Math.max(WATER, ground(this.map, a.x, a.z)) + 1.05, a.z).sub(target).multiplyScalar(Math.min(1, dt * 4));
-        target.add(this.home);
-        this.camera.position.add(this.home);
-        const base = ground(this.map, this.camera.position.x, this.camera.position.z);
-        this.camera.position.y = Math.max(this.camera.position.y, base + 1.4, -.55);
-      }
-    }
-    const hour = (8.5 + this.time / 26 + this.dayOffset) % 24;
-    const angle = (hour - 6) / 24 * Math.PI * 2;
-    const altitude = Math.sin(angle);
-    const night = clamp((.18 - altitude) * 2.05);
+    if (this.map) this.fauna.advance(dt, this.map);
+    this.documentary.frame(dt, this.fauna.records.get(this.selectedId), this.map);
+    this.skyHour = displayHour(this.skyHour, this.hour, dt);
+    const angle = solarAngle(this.skyHour);
+    const night = darkness(this.skyHour);
     const preset = SKY_PRESETS[this.weather];
-    this.sun.set(-Math.cos(angle) * .86, Math.max(.043, altitude), -.56).normalize();
+    this.sun.set(-Math.cos(angle) * .94, Math.sin(angle) * .74, -.31).normalize();
     this.camera.updateMatrixWorld();
+    this.audio?.update(this.camera, this.weather, this.fauna.records.values(), this.time);
     this.lighting.update(elapsed, this.sun, night, this.weather, preset, this.profile);
     this.canvas.dataset.environment = this.scene.environment ? 'ready' : 'fallback';
     this.renderer.toneMappingExposure = 1.06 - night * .085;
@@ -190,8 +168,8 @@ export class World {
       this.trackUpdate = elapsed;
     }
     this.land.tick(elapsed, night, this.weather, this.sun, this.camera, this.profile,
-      this.following ? this.controls.target : null);
-    this.fauna.tick(dt, elapsed, this.map, this.selectedId, this.markers, this.profile, this.camera);
+      this.documentary.active ? this.controls.target : null);
+    this.fauna.tick(dt, elapsed, this.map, this.selectedId, this.markers, this.profile, this.camera, night, this.documentary.active);
     if (this.profile.shadows && elapsed - this.shadowUpdate >= .051) {
       this.renderer.shadowMap.needsUpdate = true;
       this.shadowUpdate = elapsed;

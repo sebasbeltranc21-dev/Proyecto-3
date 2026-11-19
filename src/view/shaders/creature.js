@@ -66,7 +66,7 @@ vec3 poseAnimal(vec3 p){
 }
 `;
 
-export function animateCreature(material, time, species, depth = false) {
+export function animateCreature(material, time, species, eyes, depth = false) {
   material.onBeforeCompile = shader => {
     shader.uniforms.bodyTime = time;
     shader.uniforms.kind = species;
@@ -78,14 +78,25 @@ export function animateCreature(material, time, species, depth = false) {
         objectNormal.yz=rotatePitch(objectNormal.yz,neckPitch(position));
       `);
     if (depth) return;
-    shader.fragmentShader = 'varying vec3 vCoat;\n' + shader.fragmentShader.replace('#include <color_fragment>', `
+    shader.uniforms.eyesNight = eyes.night;
+    shader.uniforms.eyesMask = eyes.mask;
+    shader.fragmentShader = 'varying vec3 vCoat; uniform float kind, eyesNight, eyesMask;\n' + shader.fragmentShader.replace('#include <color_fragment>', `
       #include <color_fragment>
       float flow=sin(vCoat.z*13.+sin(vCoat.y*10.))*3.8;
       float fibres=sin(vCoat.x*197.+vCoat.y*98.+vCoat.z*37.+flow);
       float grain=sin(vCoat.x*111.+vCoat.y*157.+vCoat.z*198.);
       float filtered=1.-smoothstep(.18,1.05,length(fwidth(vCoat))*90.);
       diffuseColor.rgb *= 1.+(.14*fibres+.075*grain)*filtered;
+    `).replace('#include <emissivemap_fragment>', `
+      #include <emissivemap_fragment>
+      vec3 eyePoint=(vec3(abs(vCoat.x),vCoat.yz)-vec3(.152,1.171,.905))/vec3(.042,.034,.054);
+      float iris=(1.-smoothstep(.52,1.26,length(eyePoint)))*kind*smoothstep(.63,.96,eyesNight);
+      vec3 eyeGlow=vec3(2.8,1.31,.28)*iris;
+      totalEmissiveRadiance+=eyeGlow;
+    `).replace('#include <tonemapping_fragment>', `
+      if (eyesMask>.5) gl_FragColor=vec4(eyeGlow,1.);
+      #include <tonemapping_fragment>
     `);
   };
-  material.customProgramCacheKey = () => depth ? 'animal-depth-5' : 'animal-coat-5';
+  material.customProgramCacheKey = () => depth ? 'animal-depth-5' : 'animal-coat-6';
 }

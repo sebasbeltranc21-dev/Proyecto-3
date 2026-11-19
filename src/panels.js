@@ -18,6 +18,7 @@ export function shell() {
       <div class="weather-bar" role="group" aria-label="Clima del bioma">${weatherButtons}</div>
       <div class="sim-top">
         <span class="weather-readout" id="weather-readout">21 °C</span>
+        <button class="quiet icon-btn" data-cmd="audio" id="audio" type="button" title="Activar sonido" aria-label="Activar sonido" aria-pressed="false">${icon('mute')}</button>
         <button class="quiet icon-btn" data-cmd="settings" type="button" title="Ajustes" aria-label="Ajustes" aria-expanded="false">${icon('sliders')}</button>
       </div>
     </header>
@@ -57,6 +58,7 @@ export function shell() {
       <div id="agent-panel" hidden>
         <div class="identity"><div><small id="species">–</small><strong id="agent-id">–</strong></div><span id="agent-generation"></span></div>
         <div id="agent-action" class="agent-action">Explorando</div>
+        <button class="follow" data-cmd="follow" id="follow" type="button" aria-pressed="false">${icon('eye', 16)} <span>Seguir / Modo documental</span></button>
         <div class="meters">${zones.map(([label, id]) => `<div><span>${label}</span><meter id="meter-${id}" min="0" max="1" value="0" aria-label="${label}"></meter><output id="value-${id}">0%</output></div>`).join('')}</div>
         <div class="network">
           <div class="network-head"><h3>Actividad neuronal</h3><span>28 · 14 · 6</span></div>
@@ -67,7 +69,6 @@ export function shell() {
         <div class="lineage"><span>Mutaciones al nacer</span><strong id="agent-mutations">–</strong></div>
         <div class="lineage"><span>Aptitud acumulada</span><strong id="fitness">–</strong></div>
         <details class="behavior agent-detail"><summary>Sensores y acciones ${icon('chevron', 14)}</summary><div id="agent-detail"></div></details>
-        <button class="follow" data-cmd="follow" id="follow" type="button" aria-pressed="false">${icon('eye', 16)} <span>Seguir criatura</span></button>
       </div>
       <div class="pickers" role="group" aria-label="Elegir criatura cercana">
         <button type="button" data-cmd="pick-prey"><i class="prey-dot"></i>Presa</button>
@@ -106,6 +107,10 @@ export function shell() {
         </div>
       </div>
       <p class="control-hint" id="control-hint">Arrastra para orbitar <b>·</b> Rueda o pellizca para acercarte <b>·</b> Toca una criatura para inspeccionarla</p>
+    </div>
+    <div id="documentary" class="documentary" hidden>
+      <div class="documentary-caption"><strong id="documentary-id"></strong><span id="documentary-action"></span></div>
+      <button class="panel icon-btn" id="exit-documentary" data-cmd="exit-documentary" type="button" title="Salir del modo documental · Esc" aria-label="Salir del modo documental">${icon('close', 19)}</button>
     </div>
     <div id="banner" class="banner" role="status" hidden></div>
   `;
@@ -161,7 +166,7 @@ function chart(history) {
 
 let chartKey = '';
 let eventKey = '';
-export function showStats(stats, dayOffset, fps) {
+export function showStats(stats, fps) {
   const metrics = { prey: stats.counts[0], predators: stats.counts[1], generation: stats.generation, births: stats.births,
     mutations: stats.mutations, recoveries: stats.recoveries, hunt: stats.hunts, cooperative: stats.cooperative,
     shelter: stats.shelter, migrations: stats.migrations };
@@ -169,8 +174,7 @@ export function showStats(stats, dayOffset, fps) {
   byId('clock').textContent = duration(stats.time);
   byId('history-start').textContent = duration(stats.history[0]?.[0] ?? 0);
   byId('weather-readout').textContent = SKY_PRESETS[stats.weather].degrees + ' °C';
-  const hour = (8.5 + stats.time / 26 + dayOffset) % 24;
-  byId('scene-time').textContent = duration(hour * 60);
+  byId('scene-time').textContent = duration(stats.hour * 60);
   byId('render-fps').textContent = fps ? fps + ' FPS' : '– FPS';
   const latest = stats.history.at(-1)?.join();
   if (chartKey !== latest) {

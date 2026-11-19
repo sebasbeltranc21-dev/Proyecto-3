@@ -4,6 +4,7 @@ import { brush, createTerrain, ground, tile } from './terrain.js';
 import { EDGE, RiverNavigation, WADE_HEIGHT, onWaterSurface } from './river-navigation.js';
 import { CollisionIndex } from './collisions.js';
 import { BITE_WINDOW, FALL_DURATION, HUNT_DURATION, WINDUP, canBite } from './hunt.js';
+import { biomeHour, darkness, hourOffset, visionFactor } from './day-cycle.js';
 
 const CELLS = 20;
 const CELL_WIDTH = HALF * 2 / CELLS;
@@ -38,6 +39,8 @@ export class Ecosystem {
     this.nextId = 1;
     this.ticks = 0;
     this.time = 0;
+    this.dayOffset = 0;
+    this.night = darkness(this.hour);
     this.births = 0;
     this.mutations = 0;
     this.recoveries = 0;
@@ -54,6 +57,15 @@ export class Ecosystem {
       for (let i = 0; i < count; i++) this.addAgent(species);
     }
     this.record();
+  }
+
+  get hour() {
+    return biomeHour(this.time, this.dayOffset);
+  }
+
+  setHour(hour) {
+    this.dayOffset = hourOffset(this.time, hour);
+    this.night = darkness(this.hour);
   }
 
   addAgent(species, parent, mate, archived) {
@@ -90,7 +102,7 @@ export class Ecosystem {
       id: this.nextId++, species, x, z, angle: parent?.angle ?? random() * Math.PI * 2,
       hunger: .14 + random() * .25, thirst: .10 + random() * .2,
       energy: .88, health: 1, fear: 0, age: parent || archived ? 0 : random() * 22,
-      cooldown: parent ? 30 : 7 + random() * 24, attackCD: 0, speed: 0, signal: 0, hidden: false,
+      cooldown: parent ? 30 : 7 + random() * 24, attackCD: 0, speed: 0, signal: 0, signalAt: -100, hidden: false,
       kills: 0, assists: 0, escapes: 0, moves: 0, drinks: 0,
       lastAttacker: 0, touched: -100, lastShelter: -100, lastMove: -100,
       huntStarted: -100, biteAt: -100, hitAt: -100, fallAt: -100, attackTarget: 0,
@@ -165,7 +177,8 @@ export class Ecosystem {
     input.fill(0);
     const forwardX = Math.sin(a.angle);
     const forwardZ = Math.cos(a.angle);
-    const sight = (a.species ? 48 : 43) * visibility * (1 - map[a.terrainCell + 1] * .23);
+    const vision = visionFactor(a.species, this.night);
+    const sight = (a.species ? 48 : 43) * visibility * vision * (1 - map[a.terrainCell + 1] * .23);
     let prey, predator, ally, victim, signaled = 0;
     let preyD = sight, predD = sight, allyD = sight + 4, victimD = 3.3;
     const fromZ = cell(a.z - sight - 4), toZ = cell(a.z + sight + 4);
@@ -202,11 +215,12 @@ export class Ecosystem {
     for (const sector of SECTORS) {
       const azimuth = a.angle + sector;
       const sx = Math.sin(azimuth), sz = Math.cos(azimuth);
-      for (const distance of SCAN) {
+      for (const sample of SCAN) {
+        const distance = sample * vision;
         const x = a.x + sx * distance, z = a.z + sz * distance;
         if (Math.abs(x) > HALF || Math.abs(z) > HALF) break;
         const at = tile(x, z);
-        const falloff = 1 - distance / 49;
+        const falloff = 1 - sample / 49;
         const canopy = map[at + 1] * falloff;
         const nutrient = map[at + 2] * falloff;
         if (map[at] < WATER) {
@@ -254,13 +268,26 @@ export class Ecosystem {
     a.age += DT;
     a.cooldown -= DT;
     a.attackCD -= DT;
+    if (!a.signal && signal >= .60) a.signalAt = this.time;
     a.signal = signal >= .60 ? signal : 0;
     a.hidden = gait < .29 && map[oldTerrain + 1] > .54;
-    const sprint = gait > .68;
+    const hurt = this.time - a.hitAt < .24;
+    const rest = !a.species && !hurt && !a.swimming && a.fear < .30 && a.thirst < .46 &&
+      a.hunger < .78 && map[oldTerrain + 4] < .08 ? this.night * clamp((.50 - a.energy) / .17) : 0;
+    const sprint = gait > .68 && rest < .26;
     const pace = sprint ? 1.18 : a.hidden ? .32 : .73;
     let wanted = a.angle + turn * DT * 2.55;
     a.speed = throttle * species.baseSpeed * pace * (.52 + a.energy * .48);
     a.action = a.hidden ? 'Ocultándose' : sprint ? 'Corriendo' : a.signal ? 'Emitiendo señal' : 'Explorando';
+    if (rest > .16) {
+      const gathering = ally && !ally.swimming && allyD > 3.6 && allyD < 12;
+      a.speed *= 1 - rest * (gathering ? .54 : .89);
+      if (gathering) {
+        const heading = Math.atan2(ally.x - a.x, ally.z - a.z) - a.angle;
+        wanted += clamp(Math.atan2(Math.sin(heading), Math.cos(heading)), -.18, .18) * rest;
+      }
+      a.action = gathering ? 'Reuniéndose' : 'Descansando';
+    }
     let target = this.byId.get(a.attackTarget);
     const huntAge = this.time - a.huntStarted;
     if (huntAge >= HUNT_DURATION) {
@@ -290,7 +317,6 @@ export class Ecosystem {
       else a.speed *= .50;
       a.action = phase < WINDUP ? 'Preparando ataque' : striking ? 'Cazando' : 'Recuperándose';
     }
-    const hurt = this.time - a.hitAt < .24;
     if (hurt) a.speed *= .46;
     const drank = this.river.step(a, wanted, this.random);
     this.collisions.move(a);
@@ -442,6 +468,7 @@ export class Ecosystem {
   step() {
     this.ticks++;
     this.time = this.ticks * DT;
+    this.night = darkness(this.hour);
     const [temperature, visibility, moisture] = this.climate[this.weather];
     this.rebuildIndex();
     this.fallen = this.fallen.filter(a => this.time - a.fallAt < FALL_DURATION);

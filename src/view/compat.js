@@ -2,9 +2,11 @@ import { MOUSE, PerspectiveCamera, Raycaster, Vector2, Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { HALF, WATER, clamp, rng } from '../sim/config.js';
 import { ground, tile } from '../sim/terrain.js';
+import { START_HOUR, darkness, displayHour } from '../sim/day-cycle.js';
 import { SKY_PRESETS } from '../ui-data.js';
 import { Fauna } from './fauna.js';
 import { INITIAL_POSITION, INITIAL_TARGET } from './world.js';
+import { DocumentaryCamera } from './documentary.js';
 
 const DIVISIONS = 50;
 const STEP = HALF * 2 / DIVISIONS;
@@ -27,17 +29,17 @@ export class CompatibilityWorld {
     this.controls.minDistance = 18;
     this.controls.maxDistance = 365;
     this.controls.mouseButtons = { LEFT: MOUSE.ROTATE, MIDDLE: MOUSE.DOLLY, RIGHT: MOUSE.PAN };
+    this.documentary = new DocumentaryCamera(this.camera, this.controls);
     this.fauna = new Fauna();
     this.ring = { visible: false };
     this.pointer = new Vector3();
-    this.offset = new Vector3();
     this.ray = new Raycaster();
     this.cursor = new Vector2();
     this.frames = 0;
     this.fps = 0;
     this.fpsStart = 0;
     this.markers = true;
-    this.dayOffset = 0;
+    this.hour = this.skyHour = START_HOUR;
     this.time = 0;
     this.weather = 'clear';
     this.selectedId = 0;
@@ -83,7 +85,7 @@ export class CompatibilityWorld {
 
   setQuality(quality) { this.quality = quality; this.dirty = true; }
   resetView() {
-    this.following = false;
+    this.documentary.reset();
     this.camera.position.set(...INITIAL_POSITION);
     this.controls.target.set(...INITIAL_TARGET);
     this.controls.update();
@@ -143,17 +145,6 @@ export class CompatibilityWorld {
   }
 
   pick(x, y) { return this.fauna.pick(x, y, this.camera, this.width, this.height); }
-
-  focus(id, zoom = false) {
-    const a = this.fauna.records.get(id);
-    if (!a) return;
-    if (zoom) {
-      this.camera.position.set(a.x + 24, a.y + 20, a.z + 29);
-      this.controls.target.set(a.x, a.y + 2, a.z);
-      this.controls.update();
-    }
-    this.following = zoom;
-  }
 
   mountains(ctx, night) {
     const colors = [[134, 155, 146], [99, 125, 116], [74, 101, 89]];
@@ -336,17 +327,12 @@ export class CompatibilityWorld {
     if (now - this.last < .032) return;
     const dt = Math.min(.1, now - this.last);
     this.last = now;
-    this.controls.update(dt);
-    const tracked = this.fauna.records.get(this.selectedId);
-    if (this.following && tracked) {
-      const target = this.controls.target;
-      this.offset.set(tracked.x, tracked.y + 1.6, tracked.z).sub(target).multiplyScalar(dt * 4);
-      target.add(this.offset);
-      this.camera.position.add(this.offset);
-    }
+    if (this.map) this.fauna.advance(dt, this.map);
+    this.documentary.frame(dt, this.fauna.records.get(this.selectedId), this.map);
     this.camera.updateMatrixWorld();
-    const altitude = Math.sin(((8.5 + this.time / 26 + this.dayOffset) % 24 - 6) / 24 * Math.PI * 2);
-    const night = clamp((.18 - altitude) * 2.05);
+    this.audio?.update(this.camera, this.weather, this.fauna.records.values(), this.time);
+    this.skyHour = displayHour(this.skyHour, this.hour, dt);
+    const night = darkness(this.skyHour);
     const key = [this.weather, night.toFixed(2), ...this.camera.position, ...this.controls.target]
       .map(x => typeof x === 'number' ? x.toFixed(1) : x).join('/');
     if (this.dirty || key !== this.key) {
@@ -356,9 +342,8 @@ export class CompatibilityWorld {
     }
     this.ctx.drawImage(this.background, 0, 0, this.width, this.height);
     if (this.map) {
-      this.fauna.advance(dt, this.map);
       this.paintWeather(this.ctx, now);
-      this.paintIndicators(this.ctx, now);
+      if (!this.documentary.active) this.paintIndicators(this.ctx, now);
     }
     this.frames++;
     if (now - this.fpsStart >= 1) {

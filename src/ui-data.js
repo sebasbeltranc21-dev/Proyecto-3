@@ -24,6 +24,8 @@ export const ICONS = {
   chevron: '<path d="m6 9 6 6 6-6"/>',
   compass: '<path d="m8 8 11-3-3 11-11 3zM8 8l8 8"/>',
   eye: '<path d="M2 12s4-6 10-6 10 6 10 6-4 6-10 6S2 12 2 12Z"/><circle cx="12" cy="12" r="2.6"/>',
+  audio: '<path d="M3 9h4l5-4v14l-5-4H3zM15 9a4 4 0 0 1 0 6m2-8a7 7 0 0 1 0 10"/>',
+  mute: '<path d="M3 9h4l5-4v14l-5-4H3zm13 1 5 5m0-5-5 5"/>',
   expand: '<path d="M8 4H4v4m12-4h4v4M4 16v4h4m12-4v4h-4"/>',
 };
 export function icon(name, size = 19) {
