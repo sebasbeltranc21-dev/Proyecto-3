@@ -82,6 +82,7 @@ export function shell() {
       <label>Hora del bioma <input id="day" type="range" min="0" max="23.9" value="8.5" step=".1"></label>
       <form id="seed-form"><label>Semilla <input id="seed" type="number" min="0" max="4294967295" required></label><button type="submit">Aplicar</button></form>
       <output id="render-fps">– FPS</output>
+      <p id="view-mode" hidden>Vista de compatibilidad activa</p>
     </section>
     <div class="scene-legend" aria-hidden="true"><span>${icon('compass', 15)} Cuenca del Pinar</span><i></i><span id="scene-time">08:30</span></div>
     <div class="camera-controls" role="group" aria-label="Cámara">

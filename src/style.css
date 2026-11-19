@@ -224,3 +224,5 @@ input[type="range"], input[type="checkbox"] { accent-color: #bddb97; }
   .inspector { max-height: calc(100% - 168px); }
   .event-log { display: none; }
 }
+
+#view-mode { color: var(--muted); font-size: 11px; }

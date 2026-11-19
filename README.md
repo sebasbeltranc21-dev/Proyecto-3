@@ -4,7 +4,7 @@ Simulador 3D de neuroevolución. Presas y depredadores perciben el entorno, act�
 
 ## Desarrollo
 
-Requiere Node.js 22.12 o posterior y un navegador con WebGL 2.
+Requiere Node.js 22.12 o posterior y un navegador. WebGL 2 habilita el pipeline gráfico completo. La vista de compatibilidad proyecta la cuenca en Canvas 2D y conserva el worker, los pinceles, el clima y el inspector.
 
 ```sh
 npm ci
@@ -35,6 +35,7 @@ src/
     world.js          Cámara, luces, efectos, interacción y render
     land.js           Terreno PBR, cielo, agua, vegetación y partículas
     fauna.js          Mallas instanciadas, poses y selección de fauna
+    compat.js         Proyección del bioma por CPU si WebGL 2 está deshabilitado
 test/                 Pruebas del modelo y la simulación
 vercel.json           Build, caché y cabeceras
 ```

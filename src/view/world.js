@@ -10,16 +10,16 @@ import { ground } from '../sim/terrain.js';
 import { makeLand } from './land.js';
 import { Fauna } from './fauna.js';
 
-const INITIAL_POSITION = [125, 102, 176];
-const INITIAL_TARGET = [1, 8, -27];
+export const INITIAL_POSITION = [125, 102, 176];
+export const INITIAL_TARGET = [1, 8, -27];
 
 export class World {
-  constructor(canvas) {
+  constructor(canvas, context) {
     this.canvas = canvas;
     this.scene = new T.Scene();
     this.scene.fog = new T.FogExp2(0xb4c9b3, .0026);
     this.camera = new T.PerspectiveCamera(46, 1, .64, 1180);
-    this.renderer = new T.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+    this.renderer = new T.WebGLRenderer({ canvas, context, antialias: true, powerPreference: 'high-performance' });
     this.renderer.outputColorSpace = T.SRGBColorSpace;
     this.renderer.toneMapping = T.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.12;

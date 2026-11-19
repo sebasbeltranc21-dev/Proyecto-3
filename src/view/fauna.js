@@ -21,6 +21,8 @@ const parts = [
 export class Fauna {
   constructor(scene) {
     this.records = new Map();
+    this.test = new T.Vector3();
+    if (!scene) return;
     this.colors = [new T.Color(0xbfe98e), new T.Color(0xf0a266)];
     this.points = new T.InstancedMesh(
       new T.RingGeometry(.58, .85, 14).rotateX(-Math.PI / 2),
@@ -41,7 +43,6 @@ export class Fauna {
     });
     this.object = new T.Object3D();
     this.color = new T.Color();
-    this.test = new T.Vector3();
     this.selection = new T.Mesh(
       new T.RingGeometry(1.64, 1.82, 40).rotateX(-Math.PI / 2),
       new T.MeshBasicMaterial({ color: 0xe5f5ad, side: T.DoubleSide, toneMapped: false, transparent: true, opacity: .9 }),

@@ -3,6 +3,7 @@ import './style.css';
 import { showAgent, showStats, shell } from './panels.js';
 import { SKY_PRESETS, TOOLS, icon } from './ui-data.js';
 import { World } from './view/world.js';
+import { CompatibilityWorld } from './view/compat.js';
 
 const app = document.querySelector('#app');
 app.innerHTML = shell();
@@ -242,10 +243,25 @@ function start(world) {
   reset();
 }
 
+function boot() {
+  const viewport = get('viewport');
+  let world;
+  if (typeof window.WebGL2RenderingContext !== 'undefined') {
+    const options = { alpha: false, antialias: true, powerPreference: 'high-performance' };
+    const context = viewport.getContext('webgl2', options);
+    if (context) world = new World(viewport, context);
+  }
+  if (!world) {
+    world = new CompatibilityWorld(viewport);
+    get('view-mode').hidden = false;
+  }
+  start(world);
+}
+
 try {
-  start(new World(get('viewport')));
+  boot();
 } catch (error) {
   console.error(error);
   app.classList.add('unavailable');
-  announce('El bioma necesita WebGL 2. Abre la página en un navegador con aceleración gráfica.', true);
+  announce('El navegador no pudo iniciar el lienzo del bioma.', true);
 }
