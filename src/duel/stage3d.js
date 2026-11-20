@@ -4,6 +4,7 @@ import { ground } from '../sim/terrain.js';
 import { createAssets } from '../view/assets.js';
 import { AnimalModels } from '../view/models.js';
 import { makeArena } from './arena.js';
+import { PerceptionOverlay } from './perception-overlay.js';
 import { ReplayMotion } from './replay-motion.js';
 import { makeDuelTerrain } from './terrain3d.js';
 
@@ -40,6 +41,7 @@ export class DuelStage {
       new T.MeshStandardMaterial({ color: 0x54644a, roughness: 1 }));
     base.position.y = -4.2;
     this.scene.add(base);
+    this.perception = new PerceptionOverlay(this.scene);
 
     const shadow = contactShadow();
     const shadowShape = new T.PlaneGeometry(2.5, 3.6).rotateX(-Math.PI / 2);
@@ -180,13 +182,14 @@ export class DuelStage {
     camera.updateMatrixWorld();
   }
 
-  draw(time, focus, view) {
+  draw(time, focus, view, readings) {
     if (!this.ready || !this.tracks || this.rects.length < 2) return;
-    if (!this.dirty && this.time === time && this.focus === focus && this.view === view) return;
+    if (!this.dirty && this.time === time && this.focus === focus && this.view === view && this.readings === readings) return;
     this.dirty = false;
     this.time = time;
     this.focus = focus;
     this.view = view;
+    this.readings = readings;
     this.terrain.moveWater(time);
     const { renderer, scene } = this;
     renderer.setScissorTest(false);
@@ -199,6 +202,7 @@ export class DuelStage {
       const camera = this.cameras[index];
       const actors = this.tracks[index].sample(time);
       this.frameCamera(camera, actors[focus - 1], view);
+      this.perception.draw(this.arena.map, readings?.[index], time);
       for (const [i, actor] of actors.entries()) {
         const { dot, shade } = this.markers[i];
         const selected = actor.id === focus;

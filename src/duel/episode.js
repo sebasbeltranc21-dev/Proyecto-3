@@ -2,6 +2,7 @@ import { DT, rng } from '../sim/config.js';
 import { Ecosystem } from '../sim/ecosystem.js';
 import { NeuralNetwork, NI, NO } from '../sim/neural.js';
 import { tile } from '../sim/terrain.js';
+import { PERCEPTION_SIZE } from '../sim/perception.js';
 
 export const SECONDS = 16;
 export const FPS = 1 / DT;
@@ -38,6 +39,7 @@ export function playEpisode(arena, genomes, { record = false, disabled = 'none',
     Object.assign(agent, start, { age: 0, cooldown: Infinity, sizeTrait: 0, coatTrait: 0,
       terrainCell: tile(start.x, start.z), thirst: .13, hunger: .48 });
     agent.brain = new NeuralNetwork(genomes[agent.species]);
+    if (record) agent.perception = new Float32Array(PERCEPTION_SIZE);
     if (agent.id === focus && disabled !== 'none') {
       const suppressed = SENSORS[disabled]?.inputs ?? [];
       agent.brain.run = function (inputs) {
@@ -57,6 +59,7 @@ export function playEpisode(arena, genomes, { record = false, disabled = 'none',
   // Same tie-breaking randomness in every matchup, irrespective of its genomes.
   world.random = rng(arena.seed ^ 0x2b9137e);
   const frames = record ? new Float32Array((SECONDS * FPS + 1) * ROW * actors.length) : null;
+  const sensors = record ? new Float32Array((SECONDS * FPS + 1) * PERCEPTION_SIZE * actors.length) : null;
   const captures = [], seenShelter = new Set();
   let pressure = 0, timeAlive = 0, safeDistance = 0, signalTicks = 0;
   for (let tick = 0; tick <= SECONDS / DT; tick++) {
@@ -88,13 +91,14 @@ export function playEpisode(arena, genomes, { record = false, disabled = 'none',
       frames.set(agent.brain.outputs, offset + 6 + NI);
       frames.set([agent.huntStarted, agent.biteAt, agent.hitAt, agent.fallAt, agent.fear, agent.signal,
         agent.drinking ? .91 : Number(agent.action === 'Alimentándose')], offset + MOTION);
+      sensors.set(agent.perception, (tick * actors.length + i) * PERCEPTION_SIZE);
     }
   }
   for (const contact of world.contacts) if (contact.captured) captures.push(contact);
   const survivors = world.counts[0];
   const damage = actors.slice(0, 4).reduce((sum, a) => sum + (1 - Math.max(0, a.health)), 0);
   return {
-    frames, contacts: world.contacts,
+    frames, sensors, contacts: world.contacts,
     metrics: { survivors, captures: captures.length, hits: world.hits, cooperative: world.cooperative,
       shelter: seenShelter.size, survival: timeAlive, signals: signalTicks * DT },
     score: [

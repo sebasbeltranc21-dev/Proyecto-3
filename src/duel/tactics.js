@@ -1,6 +1,7 @@
 import { WATER } from '../sim/config.js';
 import { BOUNDS, SIDE } from './arena.js';
 import { FPS, IDS, ROW } from './episode.js';
+import { HALF_ANGLE, PERCEPTION_LAYERS, sightPoint } from './perception.js';
 
 const COLORS = ['#c4e8a1', '#f6ae79'];
 const XY = (row, id) => (row * IDS.length + id - 1) * ROW;
@@ -79,10 +80,55 @@ export class Tactics {
     c.strokeRect(x, y, size, size);
   }
 
-  draw(result, time, focus) {
+  drawPerception(view) {
+    if (!view) return;
+    const c = this.context;
+    const origin = this.project(view.x, view.z);
+    c.save();
+    c.lineWidth = 1.15;
+    if (view.range > 0) {
+      c.beginPath();
+      c.moveTo(...origin);
+      for (let i = 0; i <= 32; i++) {
+        const bearing = view.heading + (i / 16 - 1) * HALF_ANGLE;
+        c.lineTo(...this.project(...sightPoint(view, bearing, view.range)));
+      }
+      c.closePath();
+      c.fillStyle = PERCEPTION_LAYERS[0].color + '35';
+      c.strokeStyle = PERCEPTION_LAYERS[0].color + 'b0';
+      c.fill();
+      c.stroke();
+      c.beginPath();
+      for (let i = 0; i < 36; i++) {
+        const point = this.project(...sightPoint(view, i / 36 * Math.PI * 2, view.near));
+        if (i) c.lineTo(...point);
+        else c.moveTo(...point);
+      }
+      c.closePath();
+      c.stroke();
+    }
+    for (const [index, target] of view.targets.entries()) {
+      if (!target.visible) continue;
+      const point = this.project(target.x, target.z);
+      c.strokeStyle = PERCEPTION_LAYERS[index].color;
+      c.setLineDash(index === 2 ? [3, 2] : []);
+      c.beginPath();
+      c.moveTo(...origin);
+      c.lineTo(...point);
+      c.stroke();
+      c.setLineDash([]);
+      c.beginPath();
+      c.arc(...point, 5.5, 0, Math.PI * 2);
+      c.stroke();
+    }
+    c.restore();
+  }
+
+  draw(result, time, focus, perception) {
     if (!result || !this.width) return;
     const { context: c, width, height } = this;
     c.drawImage(this.land, 0, 0, width, height);
+    this.drawPerception(perception);
     const frame = Math.floor(time * FPS + 1e-6);
     const next = Math.min(result.frames.length / (ROW * IDS.length) - 1, frame + 1);
     const blend = time * FPS - frame;

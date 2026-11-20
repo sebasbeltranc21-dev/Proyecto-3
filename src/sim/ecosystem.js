@@ -5,6 +5,7 @@ import { EDGE, RiverNavigation, WADE_HEIGHT, onWaterSurface } from './river-navi
 import { CollisionIndex } from './collisions.js';
 import { BITE_WINDOW, FALL_DURATION, HUNT_DURATION, WINDUP, canBite } from './hunt.js';
 import { biomeHour, darkness, hourOffset, visionFactor } from './day-cycle.js';
+import { ALLY_SIGNAL_RANGE, FORWARD_SIGHT, NEAR_SIGHT } from './perception.js';
 
 const CELLS = 20;
 const CELL_WIDTH = HALF * 2 / CELLS;
@@ -179,7 +180,7 @@ export class Ecosystem {
     const forwardZ = Math.cos(a.angle);
     const vision = visionFactor(a.species, this.night);
     const sight = (a.species ? 48 : 43) * visibility * vision * (1 - map[a.terrainCell + 1] * .23);
-    let prey, predator, ally, victim, signaled = 0;
+    let prey, predator, ally, victim, signalSource, signaled = 0;
     let preyD = sight, predD = sight, allyD = sight + 4, victimD = 3.3;
     const fromZ = cell(a.z - sight - 4), toZ = cell(a.z + sight + 4);
     const fromX = cell(a.x - sight - 4), toX = cell(a.x + sight + 4);
@@ -192,7 +193,8 @@ export class Ecosystem {
           if (dist >= sight + 4) continue;
           if (a.species === b.species) {
             if (dist < allyD) { ally = b; allyD = dist; }
-            signaled = Math.max(signaled, b.signal * clamp(1 - dist / 35));
+            const received = b.signal * clamp(1 - dist / ALLY_SIGNAL_RANGE);
+            if (received > signaled) { signaled = received; signalSource = b; }
             continue;
           }
           const facing = dx * forwardX + dz * forwardZ;
@@ -201,7 +203,7 @@ export class Ecosystem {
             victimD = dist;
           }
           const range = sight * (b.hidden ? .27 : 1);
-          if (dist >= range || (dist > 7 && facing < .20 * dist)) continue;
+          if (dist >= range || (dist > NEAR_SIGHT && facing < FORWARD_SIGHT * dist)) continue;
           if (b.species && dist < predD && this.visible(a, b)) { predator = b; predD = dist; }
           if (!b.species && dist < preyD && this.visible(a, b)) { prey = b; preyD = dist; }
         }
@@ -211,7 +213,7 @@ export class Ecosystem {
     if (predator) targetSensor(input, 3, a, predator.x, predator.z, 1 - predD / sight);
     if (ally) targetSensor(input, 6, a, ally.x, ally.z, 1 - allyD / (sight + 4));
 
-    let food = 0, water = 0, cover = 0;
+    let food = 0, water = 0, cover = 0, coverX = 0, coverZ = 0;
     for (const sector of SECTORS) {
       const azimuth = a.angle + sector;
       const sx = Math.sin(azimuth), sz = Math.cos(azimuth);
@@ -236,6 +238,8 @@ export class Ecosystem {
         }
         if (canopy > cover) {
           cover = canopy;
+          coverX = x;
+          coverZ = z;
           targetSensor(input, 15, a, x, z, cover * (.42 + a.fear * .58));
         }
       }
@@ -255,6 +259,12 @@ export class Ecosystem {
     input[25] = (temperature - 19) / 24;
     input[26] = map[a.terrainCell + 3];
     input[27] = signaled;
+    if (a.perception) {
+      const rival = a.species ? prey : predator;
+      a.perception.set([a.x, a.z, a.angle, sight,
+        rival?.id ?? 0, rival?.x ?? 0, rival?.z ?? 0, ally?.id ?? 0, ally?.x ?? 0, ally?.z ?? 0,
+        signalSource?.id ?? 0, signalSource?.x ?? 0, signalSource?.z ?? 0, coverX, coverZ]);
+    }
     return { ally, allyD, victim };
   }
 

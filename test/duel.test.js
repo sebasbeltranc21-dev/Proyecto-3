@@ -6,6 +6,7 @@ import { FPS, IDS, ROW, SECONDS, playEpisode } from '../src/duel/episode.js';
 import { GENES, NI } from '../src/sim/neural.js';
 import { readAnimal } from '../src/duel/tactics.js';
 import { ReplayMotion } from '../src/duel/replay-motion.js';
+import { readPerception, sightPoint } from '../src/duel/perception.js';
 
 const { generations } = JSON.parse(await readFile(new URL('../src/duel/checkpoints.json', import.meta.url)));
 const materialize = index => generations[index].genes.map(bytes =>
@@ -52,4 +53,22 @@ test('3D motion seeks to the recorded simulation tick and reconstructs the same 
   const after = motion.sample(capture.time + .75)[capture.prey - 1];
   assert.ok(after.visible && after.health <= 0 && after.pose.down > .7);
   assert.deepEqual(motion.sample(at), before);
+});
+
+test('the perception view records actual sensing and masks only the selected network input', () => {
+  const map = makeArena(ARENAS[0].seed);
+  const weights = materialize(29);
+  const ordinary = playEpisode(map, weights, { record: true });
+  const masked = playEpisode(map, weights, { record: true, disabled: 'allies', focus: 5 });
+  const time = .1;
+  const full = readPerception(ordinary, time, 5);
+  const suppressed = readPerception(masked, time, 5, 'allies');
+  assert.ok(full.range > 7 && full.targets[0].visible);
+  assert.equal(full.targets[1].id, 6);
+  assert.equal(full.targets[1].strength, readAnimal(ordinary, time, 5)[12]);
+  assert.equal(suppressed.targets[1].visible, false);
+  assert.equal(suppressed.targets[1].strength, 0);
+  assert.equal(readPerception(masked, time, 6).targets[1].suppressed, false);
+  assert.equal(readPerception(ordinary, 0, 5), null);
+  assert.deepEqual(sightPoint({ x: 40, z: 0 }, Math.PI / 2, 12).map(Math.round), [43, 0]);
 });

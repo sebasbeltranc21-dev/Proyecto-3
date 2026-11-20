@@ -36,7 +36,8 @@ self.onmessage = ({ data }) => {
     const map = arenas[arena];
     const left = playEpisode(map, team(first, mode), { record: true });
     const right = playEpisode(map, team(last, mode), { record: true, disabled: sensor, focus });
-    self.postMessage({ type: 'matches', id, left, right, visual: map.visual }, [left.frames.buffer, right.frames.buffer]);
+    self.postMessage({ type: 'matches', id, left, right, visual: map.visual },
+      [left.frames.buffer, right.frames.buffer, left.sensors.buffer, right.sensors.buffer]);
   } catch (error) {
     self.postMessage({ type: 'error', id, message: error.message });
   }

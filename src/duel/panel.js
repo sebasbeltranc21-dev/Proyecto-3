@@ -3,6 +3,7 @@ import { OUTPUTS, clamp } from '../sim/config.js';
 import { NI } from '../sim/neural.js';
 import { ARENAS } from './arena.js';
 import { FPS, IDS, SECONDS, SENSORS } from './episode.js';
+import { PERCEPTION_LAYERS, readPerception } from './perception.js';
 import { Tactics, readAnimal } from './tactics.js';
 
 const options = (items) => items.map(([id, label]) => `<option value="${id}">${label}</option>`).join('');
@@ -35,6 +36,7 @@ function layout() {
       <div class="duel-tabs" role="group" aria-label="Vista del duelo">
         <button type="button" data-duel="view-3d" aria-pressed="true">Mapa 3D</button>
         <button type="button" data-duel="view-2d" aria-pressed="false">Vista táctica</button>
+        <button type="button" data-duel="perception" aria-pressed="false">Visión de la criatura</button>
       </div>
       <div data-duel="camera-controls" class="duel-camera">
         <label>Cámara <select data-duel="camera"><option value="follow">Seguir criatura</option><option value="overview">Vista general</option></select></label>
@@ -51,8 +53,12 @@ function layout() {
           <canvas data-duel="${side}-map" aria-label="Vista táctica ${index ? 'B' : 'A'}" hidden></canvas>
         </div>
         <div data-duel="${side}-metrics" class="duel-metrics"></div>
+        <div data-duel="${side}-perception" class="duel-perception" hidden>
+          ${PERCEPTION_LAYERS.map(({ key, label, color }) => `<div><span><i style="--tone:${color}"></i>${label}</span><strong data-duel="${side}-${key}">–</strong></div>`).join('')}
+        </div>
       </article>`).join('')}
     </div>
+    <p data-duel="perception-hint" class="duel-note duel-perception-hint" hidden>El cono marca el alcance frontal y el círculo la detección cercana. Las líneas muestran las entradas que usa la red.</p>
     <div class="duel-playback">
       <button type="button" data-duel="play">Reproducir</button>
       <input data-duel="time" type="range" min="0" max="${SECONDS}" value="0" step="${1 / FPS}" aria-label="Tiempo de la repetición">
@@ -96,6 +102,7 @@ export function createDuel(onClose) {
   let total = 0, history, example, current, match, jumpToCapture = false;
   let running = true, time = 0, prior = 0, raf = 0, request = 0, inspection = '';
   let ablation = false;
+  let showPerception = false, readings;
   let stage, stageRequest, stageState = 'loading', view = '3d';
   focus.value = '5';
   const sides = ['left', 'right'];
@@ -104,6 +111,14 @@ export function createDuel(onClose) {
     if (ablation) compare(true);
   };
   const maps = sides.map(side => new Tactics(get(side + '-map'), select));
+  const readouts = sides.map(side => PERCEPTION_LAYERS.map(({ key }) => get(`${side}-${key}`)));
+
+  function togglePerception(state) {
+    showPerception = state;
+    get('perception').setAttribute('aria-pressed', state);
+    for (const name of ['left-perception', 'right-perception', 'perception-hint']) get(name).hidden = !state;
+    inspection = '';
+  }
 
   function setView(next) {
     view = next;
@@ -160,6 +175,10 @@ export function createDuel(onClose) {
     get('sensor-value').hidden = !ablation;
     get('sensor-value').textContent = '';
     match = null;
+    for (const cells of readouts) for (const cell of cells) {
+      cell.textContent = '–';
+      cell.classList.remove('duel-masked');
+    }
     for (const side of ['left', 'right']) get(side + '-metrics').replaceChildren();
     get('moments').hidden = true;
     if (cache.has(key)) {
@@ -284,16 +303,29 @@ export function createDuel(onClose) {
     if (running) time = Math.min(SECONDS, time + dt);
     if (time === SECONDS && running) togglePlay(false);
     const selected = Number(focus.value);
-    if (view === '3d') {
-      stage.setMatch(match, ARENAS[current.arena].seed);
-      stage.draw(time, selected, get('camera').value);
-    } else {
-      maps[0].draw(match.left, time, selected);
-      maps[1].draw(match.right, time, selected);
-    }
     const row = Math.floor(time * FPS + 1e-6);
     const key = match.id + '/' + row + '/' + selected;
-    if (key === inspection) return;
+    const changed = key !== inspection;
+    if (changed) {
+      readings = showPerception ? [readPerception(match.left, time, selected),
+        readPerception(match.right, time, selected, ablation ? current.sensor : 'none')] : undefined;
+      if (readings) for (const [side, cells] of readouts.entries()) {
+        for (const [index, cell] of cells.entries()) {
+          const target = readings[side]?.targets[index];
+          cell.textContent = !target ? '–' : target.suppressed ? 'Desactivado' : !target.visible ? 'Sin detección'
+            : `${target.id ? animalName(target.id) + ' · ' : ''}${Math.round(target.strength * 100)} %`;
+          cell.classList.toggle('duel-masked', Boolean(target?.suppressed));
+        }
+      }
+    }
+    if (view === '3d') {
+      stage.setMatch(match, ARENAS[current.arena].seed);
+      stage.draw(time, selected, get('camera').value, readings);
+    } else {
+      maps[0].draw(match.left, time, selected, readings?.[0]);
+      maps[1].draw(match.right, time, selected, readings?.[1]);
+    }
+    if (!changed) return;
     inspection = key;
     const left = readAnimal(match.left, time, selected), right = readAnimal(match.right, time, selected);
     for (const [i, [a, b]] of values.entries()) {
@@ -321,12 +353,14 @@ export function createDuel(onClose) {
     get('ablation').setAttribute('aria-pressed', next);
     time = Math.max(0, time - 2.5);
     togglePlay(false);
+    if (next) togglePerception(true);
     compare(true);
   }
 
   get('close').addEventListener('click', () => dialog.close());
   get('view-3d').addEventListener('click', () => setView('3d'));
   get('view-2d').addEventListener('click', () => setView('2d'));
+  get('perception').addEventListener('click', () => togglePerception(!showPerception));
   get('zoom-in').addEventListener('click', () => stage?.zoomBy(.83));
   get('zoom-out').addEventListener('click', () => stage?.zoomBy(1 / .83));
   get('compare').addEventListener('click', () => { if (ablation) setMode(false); });
